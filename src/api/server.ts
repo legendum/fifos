@@ -106,6 +106,7 @@ async function routeWebhook(
   if (method === "GET") {
     if (verb === "info") return webhookHandlers.getInfo(req, ulid);
     if (verb === "peek") return webhookHandlers.getPeek(req, ulid);
+    if (verb === "items") return webhookHandlers.getItems(req, ulid);
     if (verb === "list" && tail) {
       return webhookHandlers.getList(req, ulid, tail);
     }
@@ -212,6 +213,10 @@ export default {
 
     if (path === "/f/settings/me" && method === "GET") {
       return settingsHandlers.getMe(userId);
+    }
+
+    if (path === "/f/fifos/items" && method === "GET") {
+      return fifosHandlers.getFifosStream(req, userId);
     }
 
     // --- Fifos CRUD (auth) ---

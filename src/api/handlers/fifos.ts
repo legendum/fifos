@@ -2,7 +2,7 @@ import { chargeFifoCreate } from "../../lib/billing.js";
 import { MAX_FIFOS_PER_USER } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { toSlug, validateFifoName } from "../../lib/fifos.js";
-import { publish } from "../../lib/sse.js";
+import { publishUserFifos, subscribe } from "../../lib/sse.js";
 import { ulid } from "../../lib/ulid.js";
 import { json } from "../json.js";
 
@@ -84,12 +84,21 @@ export function getFifosPayload(userId: number): { fifos: FifoSummary[] } {
 }
 
 function notifyFifosChanged(userId: number): void {
-  publish(`user:${userId}`, "fifos", getFifosPayload(userId));
+  publishUserFifos(userId, () => getFifosPayload(userId));
 }
 
 /** GET / — list user's fifos. */
 export function indexFifos(userId: number): Response {
   return json(getFifosPayload(userId));
+}
+
+/** GET /f/fifos/items — SSE per-user stream; initial event is the GET / payload. */
+export function getFifosStream(req: Request, userId: number): Response {
+  const lastEventId = req.headers.get("Last-Event-ID");
+  return subscribe(`user:${userId}`, lastEventId, {
+    signal: req.signal,
+    initial: { type: "fifos", payload: getFifosPayload(userId) },
+  });
 }
 
 /** POST / — create fifo. */

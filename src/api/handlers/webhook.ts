@@ -11,8 +11,13 @@ import {
   push,
   retry,
 } from "../../lib/queue.js";
-import { publish } from "../../lib/sse.js";
+import { publish, publishUserFifos, subscribe } from "../../lib/sse.js";
 import { json } from "../json.js";
+import { getFifosPayload } from "./fifos.js";
+
+function notifyFifosChanged(userId: number): void {
+  publishUserFifos(userId, () => getFifosPayload(userId));
+}
 
 const NOT_FOUND_ULID = json({ error: "not_found", reason: "ulid" }, 404);
 
@@ -54,7 +59,7 @@ export async function postPush(req: Request, ulid: string): Promise<Response> {
       position: result.position,
       created_at: result.created_at,
     });
-    publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+    notifyFifosChanged(fifo.user_id);
   }
 
   return json(
@@ -77,7 +82,7 @@ export async function postPop(_req: Request, ulid: string): Promise<Response> {
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+  notifyFifosChanged(fifo.user_id);
 
   return json({
     id: row.id,
@@ -101,7 +106,7 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+  notifyFifosChanged(fifo.user_id);
 
   return json({
     id: row.id,
@@ -126,7 +131,7 @@ export async function postAck(
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+  notifyFifosChanged(fifo.user_id);
 
   return json({ id: row.id, status: row.status });
 }
@@ -145,7 +150,7 @@ export async function postNack(
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+  notifyFifosChanged(fifo.user_id);
 
   return json({ id: row.id, status: row.status });
 }
@@ -171,7 +176,7 @@ export async function postRetry(
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  publish(`user:${fifo.user_id}`, "fifos", { fifoId: fifo.id });
+  notifyFifosChanged(fifo.user_id);
 
   return json({ id: row.id, status: row.status, position: row.position });
 }
@@ -306,4 +311,12 @@ export function getStatus(
     | undefined;
   if (!row) return json({ error: "not_found", reason: "item" }, 404);
   return respond(req, row);
+}
+
+/** GET /w/:ulid/items — SSE per-fifo stream. */
+export function getItems(req: Request, ulid: string): Response {
+  const fifo = getFifoByUlid(ulid);
+  if (!fifo) return notFoundUlid();
+  const lastEventId = req.headers.get("Last-Event-ID");
+  return subscribe(`fifo:${fifo.id}`, lastEventId, { signal: req.signal });
 }

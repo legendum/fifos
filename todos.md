@@ -58,6 +58,14 @@
 - [x] `setInterval(sweepRetention, …)` wired in `server.ts`
 - [x] `pressurePurge` called from `push` before 429
 
+### Phase 7 — SSE
+
+- [x] `src/lib/sse.ts` — per-scope ring buffers (200 events), monotonic id, replay + resync, 25s keep-alive
+- [x] `publishUserFifos(userId, computePayload)` — 250ms coalescing; per-fifo stream stays uncoalesced
+- [x] `GET /w/:ulid/items` (public) and `GET /f/fifos/items` (auth, initial snapshot)
+- [x] Verified: push/change events arrive live; `Last-Event-ID` replays gap; stale id → `resync`; 5-push burst → 1 coalesced `fifos` event
+- [ ] (Deferred) `purge` SSE events — time-based sweep doesn't track per-fifo affected; UI will reload via the next user-stream event. Acceptable for v1.
+
 ## Open questions
 
 - Do we want to copy `src/lib/legendum.md` verbatim or write a fifos-specific version? (Defaulting to verbatim copy.)
