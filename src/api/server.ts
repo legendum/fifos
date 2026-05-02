@@ -7,6 +7,7 @@ import { requireAuthAsync } from "./auth-middleware.js";
 import * as authHandlers from "./handlers/auth.js";
 import * as fifosHandlers from "./handlers/fifos.js";
 import * as settingsHandlers from "./handlers/settings.js";
+import * as webhookHandlers from "./handlers/webhook.js";
 import { json } from "./json.js";
 
 // @ts-expect-error — pure JS SDK
@@ -63,11 +64,43 @@ const legendumMiddleware = legendumSdk.isConfigured()
     })
   : null;
 
-const webhookCorsHeaders: HeadersInit = {
+const webhookCorsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Idempotency-Key",
 };
+
+/**
+ * Resolve `/w/:ulid/<verb>` routes. Returns null when the path doesn't match
+ * a registered webhook verb so the caller can fall through to a 404.
+ */
+async function routeWebhook(
+  req: Request,
+  path: string,
+  method: string,
+): Promise<Response | null> {
+  // /w/:ulid/<verb> or /w/:ulid/<verb>/:id
+  const m = path.match(/^\/w\/([0-9A-Za-z]+)\/([a-z]+)(?:\/([0-9A-Za-z]+))?$/);
+  if (!m) return null;
+  const [, ulid, verb, itemUlid] = m;
+
+  if (verb === "push" && method === "POST") {
+    return webhookHandlers.postPush(req, ulid);
+  }
+  if (verb === "pop" && method === "POST") {
+    return webhookHandlers.postPop(req, ulid);
+  }
+  if (verb === "pull" && method === "POST") {
+    return webhookHandlers.postPull(req, ulid);
+  }
+  if (verb === "ack" && itemUlid && method === "POST") {
+    return webhookHandlers.postAck(req, ulid, itemUlid);
+  }
+  if (verb === "nack" && itemUlid && method === "POST") {
+    return webhookHandlers.postNack(req, ulid, itemUlid);
+  }
+  return null;
+}
 
 export default {
   port: PORT,
@@ -90,6 +123,18 @@ export default {
 
     if (method === "OPTIONS" && path.startsWith("/w/")) {
       return new Response(null, { status: 204, headers: webhookCorsHeaders });
+    }
+
+    // --- Public webhook routes (no auth — ULID is the credential). ---
+    // Handled BEFORE user resolution because hosted mode would otherwise 401.
+    if (path.startsWith("/w/")) {
+      const res = await routeWebhook(req, path, method);
+      if (res) {
+        for (const [k, v] of Object.entries(webhookCorsHeaders)) {
+          res.headers.set(k, v);
+        }
+        return res;
+      }
     }
 
     // POST link-key: Bearer lak_ → account_token + optional session cookie.

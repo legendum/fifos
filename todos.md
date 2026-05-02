@@ -43,9 +43,9 @@
 
 ### Phase 4 — Webhook write handlers
 
-- [ ] `src/lib/queue.ts` — `push/pop/pull/ack/nack` atomic; lock reclaim
-- [ ] `src/api/handlers/webhook.ts` — `/w/:ulid/{push,pop,pull,ack,nack}`
-- [ ] Idempotency dedupe with concurrent-loser handling
+- [x] `src/lib/queue.ts` — `push/pop/pull/ack/nack` atomic; lock reclaim
+- [x] `src/api/handlers/webhook.ts` — `/w/:ulid/{push,pop,pull,ack,nack}`
+- [x] Idempotency dedupe with concurrent-loser handling
 
 ### Phase 5 — Webhook read + retry/status
 
