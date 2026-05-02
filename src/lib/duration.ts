@@ -41,7 +41,11 @@ export function parseDuration(input: string | undefined | null): number | null {
 }
 
 /** Clamp a duration in seconds to an inclusive range. */
-export function clampSeconds(seconds: number, min: number, max: number): number {
+export function clampSeconds(
+  seconds: number,
+  min: number,
+  max: number,
+): number {
   if (seconds < min) return min;
   if (seconds > max) return max;
   return seconds;

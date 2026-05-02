@@ -1,0 +1,8 @@
+node_modules/
+public/dist/
+data/
+.env
+.DS_Store
+*.log
+bun.lock
+.fifos-lock

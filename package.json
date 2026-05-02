@@ -1,0 +1,31 @@
+{
+  "name": "fifos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fifos": "src/cli/main.ts"
+  },
+  "scripts": {
+    "dev": "bun run --hot src/api/server.ts",
+    "start": "bun run scripts/build.ts && bun run src/api/server.ts",
+    "build": "bun run scripts/build.ts",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "bun test",
+    "smoke": "bun run lint && bun test && bun run build",
+    "fifos": "bun run src/cli/main.ts"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
+    "workbox-build": "^7.4.0"
+  }
+}

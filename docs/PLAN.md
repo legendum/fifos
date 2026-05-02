@@ -332,6 +332,7 @@ Copy todos' build pipeline:
 - `scripts/build.ts` — clean `public/dist`, `Bun.build`, run `workbox-build generateSW`.
 - SW config: `cacheId` = `package.json` version, `skipWaiting`, `clientsClaim`, `cleanupOutdatedCaches`, `navigateFallback: "/index.html"`.
 - Page registers SW with `updateViaCache: "none"`, reloads on `controllerchange`.
+- `public/manifest.webmanifest` linked from `index.html`; icons `fifos-192.png` (192) and `fifos-512.png` (512, `purpose: "any maskable"`).
 
 **Done when:** `bun run build` produces a content-hashed bundle and a working SW; PWA installs.
 

@@ -210,7 +210,9 @@ src/
     billing.ts
     ulid.ts
 public/
-  fifos.png
+  fifos-192.png         # PWA icon
+  fifos-512.png         # PWA icon (also maskable)
+  manifest.webmanifest
 config/
   schema.sql
   SKILL.md
@@ -470,6 +472,8 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 ## 11. PWA & service worker
 
 Same as todos: `workbox-build` `generateSW()`, `cacheId` from `package.json` version, content-hashed bundles, clean dist on build, `updateViaCache: "none"`, page reload on `controllerchange`. No FCM.
+
+`public/manifest.webmanifest` declares name `Fifos`, `start_url: "/"`, `display: "standalone"`, and the two icons (`fifos-192.png` `192x192`, `fifos-512.png` `512x512` with `purpose: "any maskable"`).
 
 ---
 
