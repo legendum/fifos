@@ -6,7 +6,8 @@
 
 - Plan: `docs/PLAN.md` (14 phases). Spec: `docs/SPEC.md`.
 - Template repo: `/Volumes/Code/todos` — port verbatim where the plan says so, swap `todos→fifos`, `lists→fifos`, `/t/→/f/`.
-- Stopping point this session: **end of Phase 6** (server core: DB, auth, fifos CRUD, queue, purger). Stretch into Phase 7+ only if tokens permit.
+- Original stopping point was **end of Phase 6**; we kept going and shipped Phases 7 (SSE), 8 (billing — already wired), 9 (CLI), and 13 (agent skill).
+- Remaining: Phases 10–12 (frontend home, fifo detail, PWA build) and Phase 14 (tests).
 
 ## Constraints
 
@@ -64,7 +65,7 @@
 - [x] `publishUserFifos(userId, computePayload)` — 250ms coalescing; per-fifo stream stays uncoalesced
 - [x] `GET /w/:ulid/items` (public) and `GET /f/fifos/items` (auth, initial snapshot)
 - [x] Verified: push/change events arrive live; `Last-Event-ID` replays gap; stale id → `resync`; 5-push burst → 1 coalesced `fifos` event
-- [ ] (Deferred) `purge` SSE events — time-based sweep doesn't track per-fifo affected; UI will reload via the next user-stream event. Acceptable for v1.
+- [x] `purge` SSE events from both `pressurePurge` (push tx) and `sweepRetention` (timer); per-fifo `purge` event with `{deleted:{done,fail}}` plus a coalesced per-user `fifos` snapshot
 
 ### Phase 8 — Billing wiring
 
@@ -89,6 +90,36 @@
 - [x] `config/SKILL.md` written
 - [x] `fifos skill` copies it to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`
 
-## Open questions
+### Phase 10 — Frontend home (not started)
 
-- Do we want to copy `src/lib/legendum.md` verbatim or write a fifos-specific version? (Defaulting to verbatim copy.)
+- [ ] Port `src/web/{App.tsx, entry.tsx, components/}` from todos; strip undo/redo + item-level UI
+- [ ] Login screen (Legendum redirect)
+- [ ] Fifos home: list from `GET /`, drag-reorder via `@dnd-kit` → `PATCH /f/reorder`, `+` create, swipe-left delete
+- [ ] Subscribe to `GET /f/fifos/items` for live updates
+- [ ] Settings: log out, Legendum link/unlink
+
+### Phase 11 — Frontend fifo detail (not started)
+
+- [ ] Header with copy-webhook button
+- [ ] Status filter chips (open/lock/done/fail) with counts
+- [ ] Items list (truncated body, position, status pill, age)
+- [ ] `+` modal posts to `/w/:ulid/push`
+- [ ] Subscribe to `GET /w/:ulid/items`
+
+### Phase 12 — PWA & service worker (not started)
+
+- [ ] `scripts/build.ts` (Bun.build + workbox-build generateSW)
+- [ ] SW config with cacheId from package.json version
+- [ ] `public/manifest.webmanifest` + icons (192, 512 maskable)
+
+### Phase 14 — Tests, smoke, polish (not started)
+
+- [ ] `tests/auth.test.ts`
+- [ ] `tests/fifos.test.ts`
+- [ ] `tests/queue.test.ts` (atomicity, stale-lock, lock clamp, retry, idempotency loser)
+- [ ] `tests/sse.test.ts` (replay, resync, keep-alive)
+- [ ] `tests/billing.test.ts`
+- [ ] `tests/cli.test.ts` (exit codes, lock lifecycle, --block timeout)
+- [ ] `tests/purge.test.ts`
+- [ ] `bun run smoke` green
+

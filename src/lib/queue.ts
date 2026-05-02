@@ -18,6 +18,7 @@ import {
   MAX_ITEMS_PER_FIFO,
 } from "./constants.js";
 import { getDb } from "./db.js";
+import { publish } from "./sse.js";
 import { ulid as makeUlid } from "./ulid.js";
 
 export type ItemStatus = "open" | "lock" | "done" | "fail";
@@ -93,7 +94,7 @@ function reclaimLocks(fifoId: number): void {
  */
 export function pressurePurge(fifoId: number): boolean {
   const db = getDb();
-  const tryPurge = (status: "done" | "fail") => {
+  const tryPurge = (status: "done" | "fail"): number => {
     const result = db.run(
       `DELETE FROM items
         WHERE id IN (
@@ -105,11 +106,14 @@ export function pressurePurge(fifoId: number): boolean {
       fifoId,
       status,
     );
-    return result.changes > 0;
+    return result.changes;
   };
-  let freed = tryPurge("done");
-  freed = tryPurge("fail") || freed;
-  return freed;
+  const done = tryPurge("done");
+  const fail = tryPurge("fail");
+  if (done || fail) {
+    publish(`fifo:${fifoId}`, "purge", { deleted: { done, fail } });
+  }
+  return done + fail > 0;
 }
 
 function loadItemById(id: number): ItemRow | null {

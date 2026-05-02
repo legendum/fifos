@@ -4,14 +4,17 @@
  * Two complementary cleanups:
  *  1. Time-based retention sweep — deletes done/fail items older than
  *     FIFOS_RETENTION_SECONDS, plus idempotency rows older than 1h.
- *     Runs on a setInterval started by server.ts.
+ *     Runs on a setInterval started by server.ts. Emits `purge` SSE
+ *     events per affected fifo and `fifos` snapshots per affected user.
  *  2. Capacity-pressure purge — runs inline from `push` in queue.ts when
  *     a fifo is at MAX_ITEMS_PER_FIFO. Implemented in queue.ts so the push
  *     transaction can call it synchronously; re-exported here for callers
  *     that want the same logic outside a tx.
  */
+import { getFifosPayload } from "../api/handlers/fifos.js";
 import { FIFOS_RETENTION_SECONDS } from "./constants.js";
 import { getDb } from "./db.js";
+import { publish, publishUserFifos } from "./sse.js";
 
 export { pressurePurge } from "./queue.js";
 
@@ -22,10 +25,17 @@ export type SweepResult = {
   idempotencyDeleted: number;
 };
 
+type DoomedRow = {
+  id: number;
+  fifo_id: number;
+  status: "done" | "fail";
+  user_id: number;
+};
+
 /**
- * Time-based retention sweep. Loops the two batched DELETEs from SPEC §5.1
- * until both report 0 changes. Short transactions (one batch each) so it
- * doesn't block writers.
+ * Time-based retention sweep. Each batch reads the doomed rows (with their
+ * fifo + user) before deleting so we can emit per-fifo `purge` events and
+ * coalesced per-user `fifos` snapshots after the writes commit.
  */
 export function sweepRetention(): SweepResult {
   const db = getDb();
@@ -33,19 +43,45 @@ export function sweepRetention(): SweepResult {
   let idempotencyDeleted = 0;
 
   while (true) {
-    const result = db.run(
-      `DELETE FROM items
-        WHERE id IN (
-          SELECT id FROM items
-           WHERE status IN ('done','fail')
-             AND updated_at < strftime('%s','now') - ?
-           LIMIT ?
-        )`,
-      FIFOS_RETENTION_SECONDS,
-      BATCH,
-    );
-    if (result.changes === 0) break;
-    itemsDeleted += result.changes;
+    const rows = db
+      .query(
+        `SELECT i.id, i.fifo_id, i.status, f.user_id
+           FROM items i
+           JOIN fifos f ON f.id = i.fifo_id
+          WHERE i.status IN ('done','fail')
+            AND i.updated_at < strftime('%s','now') - ?
+          LIMIT ?`,
+      )
+      .all(FIFOS_RETENTION_SECONDS, BATCH) as DoomedRow[];
+    if (rows.length === 0) break;
+
+    const ids = rows.map((r) => r.id);
+    const placeholders = ids.map(() => "?").join(",");
+    db.run(`DELETE FROM items WHERE id IN (${placeholders})`, ...ids);
+    itemsDeleted += rows.length;
+
+    const byFifo = new Map<
+      number,
+      { user_id: number; done: number; fail: number }
+    >();
+    for (const r of rows) {
+      let entry = byFifo.get(r.fifo_id);
+      if (!entry) {
+        entry = { user_id: r.user_id, done: 0, fail: 0 };
+        byFifo.set(r.fifo_id, entry);
+      }
+      entry[r.status] += 1;
+    }
+    const affectedUsers = new Set<number>();
+    for (const [fifoId, info] of byFifo) {
+      publish(`fifo:${fifoId}`, "purge", {
+        deleted: { done: info.done, fail: info.fail },
+      });
+      affectedUsers.add(info.user_id);
+    }
+    for (const userId of affectedUsers) {
+      publishUserFifos(userId, () => getFifosPayload(userId));
+    }
   }
 
   while (true) {
