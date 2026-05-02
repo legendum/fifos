@@ -66,6 +66,14 @@
 - [x] Verified: push/change events arrive live; `Last-Event-ID` replays gap; stale id → `resync`; 5-push burst → 1 coalesced `fifos` event
 - [ ] (Deferred) `purge` SSE events — time-based sweep doesn't track per-fifo affected; UI will reload via the next user-stream event. Acceptable for v1.
 
+### Phase 8 — Billing wiring
+
+- [x] `chargeFifoCreate(userId)` (2 cr) at `POST /` (Phase 3 already had it)
+- [x] `chargeWebhookWrite(userId)` (0.01 cr via tab) at all 6 webhook writes — `push/pop/pull/ack/nack/retry`
+- [x] Deduped push is free; self-hosted is free
+- [x] `closeTabs()` on `SIGTERM`/`SIGINT`
+- Note: phase 8 was effectively done as we built phases 3–5; this entry is bookkeeping.
+
 ## Open questions
 
 - Do we want to copy `src/lib/legendum.md` verbatim or write a fifos-specific version? (Defaulting to verbatim copy.)
