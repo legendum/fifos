@@ -30,9 +30,9 @@
 
 ### Phase 2 — Auth & Legendum (verbatim port)
 
-- [ ] `src/lib/{auth,legendum.js,legendum.d.ts,legendum.md,billing}.ts`
-- [ ] `src/api/handlers/{auth,settings}.ts` — `/t/`→`/f/`
-- [ ] `GET /f/settings/me` → `{ legendum_linked }`
+- [x] `src/lib/{auth,legendum.js,legendum.d.ts,legendum.md,billing}.ts`
+- [x] `src/api/handlers/{auth,settings}.ts` — `/t/`→`/f/`
+- [x] `GET /f/settings/me` → `{ legendum_linked }`
 
 ### Phase 3 — Fifos CRUD handlers
 
