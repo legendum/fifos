@@ -74,6 +74,21 @@
 - [x] `closeTabs()` on `SIGTERM`/`SIGINT`
 - Note: phase 8 was effectively done as we built phases 3–5; this entry is bookkeeping.
 
+### Phase 9 — CLI
+
+- [x] `src/cli/main.ts` — single-file argv parser, no commander/yargs
+- [x] Webhook URL resolution: `-f <ulid|url>` → `FIFOS_WEBHOOK` from `.env` → first-run TTY prompt → exit 2
+- [x] Bare ULID canonicalized to `${FIFOS_DOMAIN:-https://fifos.in}/w/<ulid>`
+- [x] Verbs: `push` (arg/stdin/`--key`), `pop`, `pop --block [--timeout]`, `pull [--lock]`, `ack`, `nack`, `status <id>`, `retry <id>`, `peek`, `info`, `list <status>`, `open`, `skill`, `help` (default = `info`)
+- [x] `--json` / `--yaml` on `info`/`peek`/`list`/`status`
+- [x] `.fifos-lock` written on `pull`, deleted on `ack`/`nack` (and on stale-lock 404)
+- [x] Exit codes 0/1/2 verified (empty queue, network ok, timeouts)
+
+### Phase 13 — Agent skill
+
+- [x] `config/SKILL.md` written
+- [x] `fifos skill` copies it to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`
+
 ## Open questions
 
 - Do we want to copy `src/lib/legendum.md` verbatim or write a fifos-specific version? (Defaulting to verbatim copy.)
