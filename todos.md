@@ -24,9 +24,9 @@
 
 ### Phase 1 — Schema & DB helpers
 
-- [ ] `config/schema.sql` (already present — verify against SPEC §3.1)
-- [ ] `src/lib/{db,ulid,constants,mode}.ts` ported from todos
-- [ ] `getDb()` opens db with `PRAGMA foreign_keys = ON`
+- [x] `config/schema.sql` (already present — verify against SPEC §3.1)
+- [x] `src/lib/{db,ulid,constants,mode}.ts` ported from todos
+- [x] `getDb()` opens db with `PRAGMA foreign_keys = ON`
 
 ### Phase 2 — Auth & Legendum (verbatim port)
 
