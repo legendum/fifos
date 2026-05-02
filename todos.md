@@ -54,9 +54,9 @@
 
 ### Phase 6 — Purger
 
-- [ ] `src/lib/purge.ts` — `sweepRetention()`, `pressurePurge(fifoId)`
-- [ ] `setInterval(sweepRetention, …)` wired in `server.ts`
-- [ ] `pressurePurge` called from `push` before 429
+- [x] `src/lib/purge.ts` — `sweepRetention()`, `pressurePurge(fifoId)`
+- [x] `setInterval(sweepRetention, …)` wired in `server.ts`
+- [x] `pressurePurge` called from `push` before 429
 
 ## Open questions
 

@@ -1,8 +1,9 @@
 import { setAuthCookieHeader } from "../lib/auth.js";
 import { closeTabs } from "../lib/billing.js";
-import { PORT } from "../lib/constants.js";
+import { FIFOS_PURGE_INTERVAL_SECONDS, PORT } from "../lib/constants.js";
 import { getDb } from "../lib/db.js";
 import { isSelfHosted, LOCAL_USER_EMAIL } from "../lib/mode.js";
+import { sweepRetention } from "../lib/purge.js";
 import { requireAuthAsync } from "./auth-middleware.js";
 import * as authHandlers from "./handlers/auth.js";
 import * as fifosHandlers from "./handlers/fifos.js";
@@ -14,6 +15,11 @@ import { json } from "./json.js";
 const legendumSdk = require("../lib/legendum.js");
 
 getDb();
+
+// Time-based retention sweep — every FIFOS_PURGE_INTERVAL_SECONDS (default 1h),
+// plus a sweep on boot so a long-stopped instance catches up before serving.
+sweepRetention();
+setInterval(sweepRetention, FIFOS_PURGE_INTERVAL_SECONDS * 1000);
 
 const legendumMiddleware = legendumSdk.isConfigured()
   ? legendumSdk.middleware({
