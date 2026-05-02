@@ -79,25 +79,33 @@ async function routeWebhook(
   path: string,
   method: string,
 ): Promise<Response | null> {
-  // /w/:ulid/<verb> or /w/:ulid/<verb>/:id
-  const m = path.match(/^\/w\/([0-9A-Za-z]+)\/([a-z]+)(?:\/([0-9A-Za-z]+))?$/);
+  // Strip optional content-negotiation suffix for verb dispatch.
+  const m = path.match(
+    /^\/w\/([0-9A-Za-z]+)\/([a-z]+)(?:\/([0-9A-Za-z]+))?(?:\.(json|yaml))?$/,
+  );
   if (!m) return null;
-  const [, ulid, verb, itemUlid] = m;
+  const [, ulid, verb, tail] = m;
 
-  if (verb === "push" && method === "POST") {
-    return webhookHandlers.postPush(req, ulid);
+  if (method === "POST") {
+    if (verb === "push") return webhookHandlers.postPush(req, ulid);
+    if (verb === "pop") return webhookHandlers.postPop(req, ulid);
+    if (verb === "pull") return webhookHandlers.postPull(req, ulid);
+    if (verb === "ack" && tail) return webhookHandlers.postAck(req, ulid, tail);
+    if (verb === "nack" && tail)
+      return webhookHandlers.postNack(req, ulid, tail);
+    if (verb === "retry" && tail) {
+      return webhookHandlers.postRetry(req, ulid, tail);
+    }
   }
-  if (verb === "pop" && method === "POST") {
-    return webhookHandlers.postPop(req, ulid);
-  }
-  if (verb === "pull" && method === "POST") {
-    return webhookHandlers.postPull(req, ulid);
-  }
-  if (verb === "ack" && itemUlid && method === "POST") {
-    return webhookHandlers.postAck(req, ulid, itemUlid);
-  }
-  if (verb === "nack" && itemUlid && method === "POST") {
-    return webhookHandlers.postNack(req, ulid, itemUlid);
+  if (method === "GET") {
+    if (verb === "info") return webhookHandlers.getInfo(req, ulid);
+    if (verb === "peek") return webhookHandlers.getPeek(req, ulid);
+    if (verb === "list" && tail) {
+      return webhookHandlers.getList(req, ulid, tail);
+    }
+    if (verb === "status" && tail) {
+      return webhookHandlers.getStatus(req, ulid, tail);
+    }
   }
   return null;
 }

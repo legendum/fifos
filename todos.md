@@ -49,8 +49,8 @@
 
 ### Phase 5 — Webhook read + retry/status
 
-- [ ] `/w/:ulid/{info,peek,list/:status,status/:id,retry/:id}`
-- [ ] Content negotiation (Accept + `.json`/`.yaml` suffixes)
+- [x] `/w/:ulid/{info,peek,list/:status,status/:id,retry/:id}`
+- [x] Content negotiation (Accept + `.json`/`.yaml` suffixes)
 
 ### Phase 6 — Purger
 
