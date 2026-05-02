@@ -5,6 +5,7 @@ import { getDb } from "../lib/db.js";
 import { isSelfHosted, LOCAL_USER_EMAIL } from "../lib/mode.js";
 import { requireAuthAsync } from "./auth-middleware.js";
 import * as authHandlers from "./handlers/auth.js";
+import * as fifosHandlers from "./handlers/fifos.js";
 import * as settingsHandlers from "./handlers/settings.js";
 import { json } from "./json.js";
 
@@ -152,6 +153,41 @@ export default {
 
     if (path === "/f/settings/me" && method === "GET") {
       return settingsHandlers.getMe(userId);
+    }
+
+    // --- Fifos CRUD (auth) ---
+    if (path === "/" && method === "GET") {
+      return fifosHandlers.indexFifos(userId);
+    }
+    if (path === "/" && method === "POST") {
+      return await fifosHandlers.createFifo(req, userId);
+    }
+    if (path === "/f/reorder" && method === "PATCH") {
+      return await fifosHandlers.reorderFifos(req, userId);
+    }
+
+    // /:slug — must avoid colliding with /f/*, /w/*, /auth/*, /dist/*.
+    const slugMatch = path.match(/^\/([a-zA-Z0-9][a-zA-Z0-9._-]*)$/);
+    if (
+      slugMatch &&
+      !path.startsWith("/f/") &&
+      !path.startsWith("/w/") &&
+      !path.startsWith("/auth/") &&
+      !path.startsWith("/dist/")
+    ) {
+      const rawSlug = slugMatch[1];
+      if (method === "GET") {
+        const result = fifosHandlers.getFifo(req, rawSlug, userId);
+        if (result === null)
+          return json({ error: "not_found", reason: "route" }, 404);
+        return result;
+      }
+      if (method === "PATCH") {
+        return await fifosHandlers.renameFifo(req, rawSlug, userId);
+      }
+      if (method === "DELETE") {
+        return fifosHandlers.deleteFifo(rawSlug, userId);
+      }
     }
 
     return json({ error: "not_found", reason: "route" }, 404);

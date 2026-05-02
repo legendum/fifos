@@ -36,10 +36,10 @@
 
 ### Phase 3 — Fifos CRUD handlers
 
-- [ ] `src/api/handlers/fifos.ts` — `GET/POST /`, `GET/PATCH/DELETE /:slug`, `PATCH /f/reorder`
-- [ ] Reserved slugs `[f, w, auth]`
-- [ ] `src/lib/sse.ts` no-op stub
-- [ ] Wired into `src/api/server.ts`
+- [x] `src/api/handlers/fifos.ts` — `GET/POST /`, `GET/PATCH/DELETE /:slug`, `PATCH /f/reorder`
+- [x] Reserved slugs `[f, w, auth]`
+- [x] `src/lib/sse.ts` no-op stub
+- [x] Wired into `src/api/server.ts`
 
 ### Phase 4 — Webhook write handlers
 
