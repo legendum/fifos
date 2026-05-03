@@ -116,7 +116,7 @@
 
 - [ ] `tests/auth.test.ts`
 - [x] `tests/fifos.test.ts` — CRUD, reserved slugs, rename + collision, reorder, MAX cap, cascade-delete
-- [ ] `tests/queue.test.ts` (atomicity, stale-lock, lock clamp, retry, idempotency loser)
+- [x] `tests/queue.test.ts` — push/pop/pull/ack/nack atomicity, idempotency, stale-lock, lazy reclaim, lock TTL clamp, retry, capacity + pressure-purge
 - [ ] `tests/sse.test.ts` (replay, resync, keep-alive)
 - [ ] `tests/billing.test.ts`
 - [ ] `tests/cli.test.ts` (exit codes, lock lifecycle, --block timeout)

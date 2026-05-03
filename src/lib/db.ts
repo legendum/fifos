@@ -21,6 +21,14 @@ export function getDb(): Database {
   return db;
 }
 
+/** Test helper — close the cached connection so the next getDb() picks up a new path. */
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
 function runSchema(): void {
   const schemaPath = join(ROOT_DIR, "config/schema.sql");
   try {

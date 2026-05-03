@@ -7,9 +7,12 @@ let server: { stop: () => void } | undefined;
 let base: string;
 
 beforeAll(async () => {
-  // Force self-hosted mode + isolated DB + small cap so we can test the limit.
+  // Force self-hosted mode + isolated DB + small caps so we can test limits.
+  // Match queue.test.ts so the constants module sees the same values
+  // regardless of which file initializes it first (bun:test shares the process).
   process.env.FIFOS_DB_PATH = TEST_DB_PATH;
   process.env.FIFOS_MAX_FIFOS_PER_USER = "3";
+  process.env.FIFOS_MAX_ITEMS_PER_FIFO = "5";
   delete process.env.LEGENDUM_API_KEY;
   delete process.env.LEGENDUM_SECRET;
 
@@ -21,8 +24,10 @@ beforeAll(async () => {
   base = `http://localhost:${PORT}`;
 });
 
-afterAll(() => {
+afterAll(async () => {
   server?.stop();
+  const { closeDb } = await import("../src/lib/db");
+  closeDb();
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
 });
 
