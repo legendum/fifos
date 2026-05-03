@@ -4,7 +4,7 @@ Use the `fifos` CLI to push/pop work items on a FIFO queue.
 
 ## Setup
 - Each project's queue is configured by `FIFOS_WEBHOOK` in `.env`.
-- For multi-queue services, pass `-f <id|url>` per command instead.
+- For multi-queue services, pass `-f <ulid|url>` per command instead.
 
 ## Verbs
 - `fifos push "data"` — append an item. Use `--key <id>` for retry-safe pushes.

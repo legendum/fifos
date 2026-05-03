@@ -105,7 +105,7 @@ describe("CLI exit codes", () => {
   test("push 'hello' returns the new id and exits 0", async () => {
     const r = await runCli(["push", "hello"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^[0-9A-HJKMNP-TV-Z]{20}$/i);
+    expect(r.stdout.trim()).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i);
   });
 
   test("push via stdin pipes the body", async () => {
@@ -137,12 +137,12 @@ describe("CLI exit codes", () => {
   });
 
   test("status <unknown-id>: exit 1", async () => {
-    const r = await runCli(["status", "01HXXXXXXXXXXXXXXXXXXX"]);
+    const r = await runCli(["status", "01HXXXXXXXXXXXXXXXXXXXXXXX"]);
     expect(r.exitCode).toBe(1);
   });
 
   test("retry <unknown-id>: exit 1", async () => {
-    const r = await runCli(["retry", "01HXXXXXXXXXXXXXXXXXXX"]);
+    const r = await runCli(["retry", "01HXXXXXXXXXXXXXXXXXXXXXXX"]);
     expect(r.exitCode).toBe(1);
   });
 
@@ -178,7 +178,7 @@ describe("CLI .fifos-lock lifecycle", () => {
     expect(pull.stdout.trim()).toBe("ack-me");
     expect(existsSync(lockPath)).toBe(true);
     const lockId = readFileSync(lockPath, "utf-8").trim();
-    expect(lockId).toMatch(/^[0-9A-HJKMNP-TV-Z]{20}$/i);
+    expect(lockId).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i);
 
     const ack = await runCli(["ack"]);
     expect(ack.exitCode).toBe(0);

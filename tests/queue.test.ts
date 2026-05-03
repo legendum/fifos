@@ -254,7 +254,7 @@ describe("queue.pull / ack / nack", () => {
 
   test("ack on unknown ulid returns null", async () => {
     const f = await mkFifo("ack-unknown");
-    expect(q.ack(f.id, "ZZZZZZZZZZZZZZZZZZZZ")).toBeNull();
+    expect(q.ack(f.id, "ZZZZZZZZZZZZZZZZZZZZZZZZZZ")).toBeNull();
   });
 
   test("nack reason is preserved across ItemRow read paths", async () => {
@@ -433,7 +433,7 @@ describe("queue.retry", () => {
 
   test("retry on unknown ulid → not_found", async () => {
     const f = await mkFifo("retry-unknown");
-    const r = q.retry(f.id, "ZZZZZZZZZZZZZZZZZZZZ");
+    const r = q.retry(f.id, "ZZZZZZZZZZZZZZZZZZZZZZZZZZ");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("not_found");
   });

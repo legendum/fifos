@@ -4,7 +4,7 @@
  * fifos — stateless CLI. Every subcommand is a single webhook call.
  *
  * Resolution order for the target webhook URL:
- *   1. `-f` / `--fifo <id|url>` flag (per-call override)
+ *   1. `-f` / `--fifo <ulid|url>` flag (per-call override)
  *   2. `FIFOS_WEBHOOK` from the cwd `.env`
  *   3. Interactive TTY prompt → save to `.env`
  *   4. Error (exit 2) when stdin isn't a TTY
@@ -27,7 +27,9 @@ import {
 import { dirname, join } from "node:path";
 
 const LOCK_FILE = ".fifos-lock";
-const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{20}$/i;
+// 26-char ULID, Crockford base32. First char is 0-7 (high 2 bits of a 48-bit
+// ms timestamp are zero until ~year 10889).
+const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i;
 
 type Format = "text" | "json" | "yaml";
 
@@ -115,11 +117,11 @@ function resolveWebhookUrl(override: string | null): string {
   if (fromEnv) return canonicalize(fromEnv);
   if (!process.stdin.isTTY) {
     console.error(
-      "FIFOS_WEBHOOK not set. Pass -f <id|url>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
+      "FIFOS_WEBHOOK not set. Pass -f <ulid|url>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
     );
     process.exit(2);
   }
-  process.stdout.write("Enter your fifos webhook URL or identifier: ");
+  process.stdout.write("Enter your fifos webhook URL or ULID: ");
   const raw = readLineSync().trim();
   if (!raw) {
     console.error("No URL provided.");
@@ -613,7 +615,7 @@ Usage:
   fifos help                     this message
 
 Global:
-  -f, --fifo <id|url>            override FIFOS_WEBHOOK for this call
+  -f, --fifo <ulid|url>          override FIFOS_WEBHOOK for this call
   --json | --yaml                JSON/YAML output for info/peek/list/status
 
 Setup:

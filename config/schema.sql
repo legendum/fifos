@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- Fifos: each fifo is a named FIFO queue with a unique webhook URL.
 -- name: display name as typed by user (may contain spaces).
 -- slug: URL-safe version (lowercase, spaces/underscores → hyphens). Unique per user.
--- ulid: 20-char Crockford base32; the public webhook credential at /w/<ulid>.
+-- ulid: 26-char ULID (Crockford base32, 48-bit ms timestamp + 80-bit random,
+--   per the published spec); the public webhook credential at /w/<ulid>.
 -- position: user-defined ordering on the home screen (drag to reorder).
 -- seq: monotonic per-fifo counter; the next pushed item gets seq+1 as its position.
 CREATE TABLE IF NOT EXISTS fifos (
@@ -41,7 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_fifos_ulid           ON fifos(ulid);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fifos_user_slug ON fifos(user_id, slug);
 
 -- Items: queue entries.
--- ulid: 20-char Crockford base32; the public id used in ack/nack/status/retry.
+-- ulid: 26-char ULID (Crockford base32) — the public id used in ack/nack/status/retry.
 -- position: assigned from fifos.seq at push time; FIFO order = position ASC among 'open'.
 -- status: 'open' (queued), 'lock' (pulled, awaiting ack), 'done' (popped or acked), 'fail' (nacked).
 -- data: the item body — UTF-8 text, max 64 KB (enforced at the API boundary).

@@ -31,7 +31,7 @@ The CLI is stateless. Each project's queue is configured via `FIFOS_WEBHOOK` in 
 FIFOS_WEBHOOK=http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C
 ```
 
-First-run prompts for it interactively if missing. Override per-call with `-f <id|url>`:
+First-run prompts for it interactively if missing. Override per-call with `-f <ulid|url>`:
 
 ```bash
 fifos -f 01HKZ8M3RT9PDXVJ1Q4F2BXY7C push "hello"
@@ -71,17 +71,17 @@ Every queue has a public, unguessable webhook URL — `POST` verbs are authentic
 
 | Method + path | Notes |
 |---|---|
-| `POST /w/:id/push` | Body = item. Optional `Idempotency-Key: <s>`. |
-| `POST /w/:id/pop` | Atomic open → done. `204` if empty. |
-| `POST /w/:id/pull?lock=5m` | Atomic open → lock. `204` if empty. |
-| `POST /w/:id/ack/:itemId` | Lock → done. |
-| `POST /w/:id/nack/:itemId` | Lock → fail. Optional `text/plain` body = reason (max 1 KiB). |
-| `POST /w/:id/retry/:itemId` | Done/fail → open at the tail (same id). |
-| `GET /w/:id/info` | Counts + summary. |
-| `GET /w/:id/peek?n=10` | Up to N oldest open items. |
-| `GET /w/:id/list/:status?n=10[&reason=<substr>]` | List by status. `reason` only honored for `fail`. |
-| `GET /w/:id/status/:itemId` | One item. |
-| `GET /w/:id/items` | SSE stream — `push` / `change` / `purge` events with `Last-Event-ID` replay. |
+| `POST /w/:ulid/push` | Body = item. Optional `Idempotency-Key: <s>`. |
+| `POST /w/:ulid/pop` | Atomic open → done. `204` if empty. |
+| `POST /w/:ulid/pull?lock=5m` | Atomic open → lock. `204` if empty. |
+| `POST /w/:ulid/ack/:id` | Lock → done. |
+| `POST /w/:ulid/nack/:id` | Lock → fail. Optional `text/plain` body = reason (max 1 KiB). |
+| `POST /w/:ulid/retry/:id` | Done/fail → open at the tail (same id). |
+| `GET /w/:ulid/info` | Counts + summary. |
+| `GET /w/:ulid/peek?n=10` | Up to N oldest open items. |
+| `GET /w/:ulid/list/:status?n=10[&reason=<substr>]` | List by status. `reason` only honored for `fail`. |
+| `GET /w/:ulid/status/:id` | One item. |
+| `GET /w/:ulid/items` | SSE stream — `push` / `change` / `purge` events with `Last-Event-ID` replay. |
 
 JSON is the default; append `.yaml` (or `Accept: application/yaml`) for YAML.
 
