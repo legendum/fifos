@@ -1,17 +1,18 @@
 /**
- * Queue core — push/pop/pull/ack/nack/retry.
+ * Queue core — push/pop/pull/done/fail/retry.
  *
  * All five mutating verbs run inside a single `db.transaction` (which uses
  * SQLite's BEGIN IMMEDIATE) so the read-then-write sequences are atomic
  * even under concurrent webhook traffic.
  *
  * `pop` and `pull` first reclaim expired locks (status='lock' AND
- * locked_until < now) back to 'open' — this is the lazy reclaim per
- * SPEC §5.3 / §2.3. `ack`/`nack` deliberately do NOT check `locked_until`
- * so a slow worker can still ack a "stale" lock until something else
- * has actually pulled it back to open.
+ * locked_until < now) back to 'todo' — this is the lazy reclaim per
+ * SPEC §5.3 / §2.3. `done`/`fail` deliberately do NOT check `locked_until`
+ * so a slow worker can still finish a "stale" lock until something else
+ * has actually pulled it back to todo.
  */
 import {
+  FIFOS_LOCK_TIMEOUT_SECONDS,
   IDEMPOTENCY_WINDOW_SECONDS,
   LOCK_TIMEOUT_MAX_SECONDS,
   LOCK_TIMEOUT_MIN_SECONDS,
@@ -21,7 +22,7 @@ import { getDb } from "./db.js";
 import { publish } from "./sse.js";
 import { ulid as makeUlid } from "./ulid.js";
 
-export type ItemStatus = "open" | "lock" | "done" | "fail";
+export type ItemStatus = "todo" | "lock" | "done" | "fail" | "skip";
 
 export type ItemRow = {
   id: string;
@@ -32,6 +33,7 @@ export type ItemRow = {
   status: ItemStatus;
   locked_until: number | null;
   fail_reason: string | null;
+  skip_reason: string | null;
 };
 
 export type PushResult = {
@@ -59,7 +61,10 @@ export function getFifoByUlid(ulid: string): FifoLookup | null {
 }
 
 function clampLock(seconds: number | null): number {
-  let s = seconds == null || !Number.isFinite(seconds) ? 300 : seconds;
+  let s =
+    seconds == null || !Number.isFinite(seconds)
+      ? FIFOS_LOCK_TIMEOUT_SECONDS
+      : seconds;
   if (s < LOCK_TIMEOUT_MIN_SECONDS) s = LOCK_TIMEOUT_MIN_SECONDS;
   if (s > LOCK_TIMEOUT_MAX_SECONDS) s = LOCK_TIMEOUT_MAX_SECONDS;
   return s;
@@ -69,12 +74,12 @@ function now(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** Lazy reclaim expired locks back to open. Run inside a tx, before pop/pull select. */
+/** Lazy reclaim expired locks back to todo. Run inside a tx, before pop/pull select. */
 function reclaimLocks(fifoId: number): void {
   const db = getDb();
   db.run(
     `UPDATE items
-        SET status = 'open', locked_until = NULL,
+        SET status = 'todo', locked_until = NULL,
             updated_at = strftime('%s','now')
       WHERE fifo_id = ?
         AND status = 'lock'
@@ -95,7 +100,7 @@ function reclaimLocks(fifoId: number): void {
  */
 export function pressurePurge(fifoId: number): boolean {
   const db = getDb();
-  const tryPurge = (status: "done" | "fail"): number => {
+  const tryPurge = (status: "done" | "fail" | "skip"): number => {
     const result = db.run(
       `DELETE FROM items
         WHERE id IN (
@@ -111,17 +116,19 @@ export function pressurePurge(fifoId: number): boolean {
   };
   const done = tryPurge("done");
   const fail = tryPurge("fail");
-  if (done || fail) {
-    publish(`fifo:${fifoId}`, "purge", { deleted: { done, fail } });
+  const skip = tryPurge("skip");
+  if (done || fail || skip) {
+    publish(`fifo:${fifoId}`, "purge", { deleted: { done, fail, skip } });
   }
-  return done + fail > 0;
+  return done + fail + skip > 0;
 }
 
 function loadItemById(id: number): ItemRow | null {
   const db = getDb();
   const row = db
     .query(
-      `SELECT ulid AS id, position, data, created_at, updated_at, status, locked_until, fail_reason
+      `SELECT ulid AS id, position, data, created_at, updated_at, status,
+              locked_until, fail_reason, skip_reason
          FROM items WHERE id = ?`,
     )
     .get(id) as ItemRow | undefined;
@@ -180,7 +187,7 @@ export function push(
     const itemUlid = makeUlid();
     const insert = db.run(
       `INSERT INTO items (fifo_id, ulid, position, status, data)
-       VALUES (?, ?, ?, 'open', ?)`,
+       VALUES (?, ?, ?, 'todo', ?)`,
       fifoId,
       itemUlid,
       position,
@@ -225,7 +232,7 @@ export function push(
   })();
 }
 
-/** Pop the oldest open item — sets status='done' and returns the row. */
+/** Pop the oldest todo item — sets status='done' and returns the row. */
 export function pop(fifoId: number): ItemRow | null {
   const db = getDb();
   return db.transaction(() => {
@@ -234,7 +241,7 @@ export function pop(fifoId: number): ItemRow | null {
       .query(
         `SELECT id, ulid, position, data, created_at, updated_at
            FROM items
-          WHERE fifo_id = ? AND status = 'open'
+          WHERE fifo_id = ? AND status = 'todo'
           ORDER BY position ASC
           LIMIT 1`,
       )
@@ -257,7 +264,7 @@ export function pop(fifoId: number): ItemRow | null {
   })();
 }
 
-/** Pull the oldest open item — sets status='lock' with a TTL. */
+/** Pull the oldest todo item — sets status='lock' with a TTL. */
 export function pull(
   fifoId: number,
   lockSeconds: number | null,
@@ -268,7 +275,7 @@ export function pull(
     const row = db
       .query(
         `SELECT id FROM items
-          WHERE fifo_id = ? AND status = 'open'
+          WHERE fifo_id = ? AND status = 'todo'
           ORDER BY position ASC
           LIMIT 1`,
       )
@@ -289,17 +296,17 @@ export function pull(
 }
 
 /** Mark a locked item done. Returns null if it's not in 'lock' anymore. */
-export function ack(fifoId: number, itemUlid: string): ItemRow | null {
+export function done(fifoId: number, itemUlid: string): ItemRow | null {
   return finishLocked(fifoId, itemUlid, "done", null);
 }
 
 /**
- * Mark a locked item failed. Returns null if it's not in 'lock' anymore.
+ * Mark a locked item failed (retryable). Returns null if it's not in 'lock' anymore.
  *
  * `reason` is optional diagnostic text shown in the web GUI and read paths;
  * caller is responsible for length-capping (the API boundary enforces 1 KiB).
  */
-export function nack(
+export function fail(
   fifoId: number,
   itemUlid: string,
   reason?: string | null,
@@ -307,11 +314,25 @@ export function nack(
   return finishLocked(fifoId, itemUlid, "fail", reason ?? null);
 }
 
+/**
+ * Mark a locked item skipped (terminal — `retry` refuses 'skip').
+ * Returns null if it's not in 'lock' anymore.
+ *
+ * `reason` is optional diagnostic text. Same length contract as `fail`.
+ */
+export function skip(
+  fifoId: number,
+  itemUlid: string,
+  reason?: string | null,
+): ItemRow | null {
+  return finishLocked(fifoId, itemUlid, "skip", reason ?? null);
+}
+
 function finishLocked(
   fifoId: number,
   itemUlid: string,
-  next: "done" | "fail",
-  failReason: string | null,
+  next: "done" | "fail" | "skip",
+  reason: string | null,
 ): ItemRow | null {
   const db = getDb();
   return db.transaction(() => {
@@ -322,11 +343,13 @@ function finishLocked(
     if (row.status !== "lock") return null;
     db.run(
       `UPDATE items
-          SET status = ?, locked_until = NULL, fail_reason = ?,
+          SET status = ?, locked_until = NULL,
+              fail_reason = ?, skip_reason = ?,
               updated_at = strftime('%s','now')
         WHERE id = ?`,
       next,
-      next === "fail" ? failReason : null,
+      next === "fail" ? reason : null,
+      next === "skip" ? reason : null,
       row.id,
     );
     return loadItemById(row.id);
@@ -334,7 +357,7 @@ function finishLocked(
 }
 
 /**
- * Move a done/fail item back to open at the tail (new position from seq).
+ * Move a done/fail item back to todo at the tail (new position from seq).
  * Returns the updated row, or `{ error: 'not_found' | 'wrong_status' }`.
  */
 export function retry(
@@ -349,7 +372,11 @@ export function retry(
       .query("SELECT id, status FROM items WHERE fifo_id = ? AND ulid = ?")
       .get(fifoId, itemUlid) as { id: number; status: ItemStatus } | undefined;
     if (!row) return { ok: false, reason: "not_found" } as const;
-    if (row.status === "open" || row.status === "lock") {
+    if (
+      row.status === "todo" ||
+      row.status === "lock" ||
+      row.status === "skip"
+    ) {
       return { ok: false, reason: "wrong_status" } as const;
     }
     const seqRow = db
@@ -359,8 +386,9 @@ export function retry(
       .get(fifoId) as { seq: number };
     db.run(
       `UPDATE items
-          SET status = 'open', position = ?, locked_until = NULL,
-              fail_reason = NULL, updated_at = strftime('%s','now')
+          SET status = 'todo', position = ?, locked_until = NULL,
+              fail_reason = NULL, skip_reason = NULL,
+              updated_at = strftime('%s','now')
         WHERE id = ?`,
       seqRow.seq,
       row.id,

@@ -1,8 +1,9 @@
 export type StatusCounts = {
-  open: number;
+  todo: number;
   lock: number;
   done: number;
   fail: number;
+  skip: number;
 };
 
 export type FifoEntry = {
@@ -14,7 +15,7 @@ export type FifoEntry = {
   created_at: number;
 };
 
-export type ItemStatus = "open" | "lock" | "done" | "fail";
+export type ItemStatus = "todo" | "lock" | "done" | "fail" | "skip";
 
 export type Item = {
   id: string;
@@ -23,6 +24,7 @@ export type Item = {
   data: string;
   locked_until: number | null;
   fail_reason: string | null;
+  skip_reason: string | null;
   created_at: number;
   updated_at: number;
 };

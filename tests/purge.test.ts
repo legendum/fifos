@@ -92,11 +92,11 @@ describe("sweepRetention — time-based", () => {
     expect(result.itemsDeleted).toBe(0);
   });
 
-  test("never deletes open or lock items, even if aged", async () => {
-    const f = await mkFifo("sweep-open-lock");
-    const a = q.push(f.id, "open-but-old")!;
+  test("never deletes todo or lock items, even if aged", async () => {
+    const f = await mkFifo("sweep-todo-lock");
+    const a = q.push(f.id, "todo-but-old")!;
     const b = q.push(f.id, "locked-but-old")!;
-    q.pull(f.id, 60); // a is the older one — gets locked. b stays open.
+    q.pull(f.id, 60); // a is the older one — gets locked. b stays todo.
     // Age both rows.
     ageItem(a.id, 600);
     ageItem(b.id, 600);
@@ -176,7 +176,7 @@ describe("pressurePurge — capacity-pressure", () => {
   test("frees space by deleting oldest done rows first", async () => {
     const f = await mkFifo("press-done");
     for (let i = 0; i < 5; i++) q.push(f.id, `i${i}`);
-    // Pop 2 → 2 done; remaining 3 open.
+    // Pop 2 → 2 done; remaining 3 todo.
     q.pop(f.id);
     q.pop(f.id);
     const freed = purge.pressurePurge(f.id);
@@ -187,9 +187,9 @@ describe("pressurePurge — capacity-pressure", () => {
         "SELECT status, COUNT(*) AS n FROM items WHERE fifo_id = ? GROUP BY status",
       )
       .all(f.id) as { status: string; n: number }[];
-    const open = counts.find((c) => c.status === "open")?.n ?? 0;
+    const todo = counts.find((c) => c.status === "todo")?.n ?? 0;
     const done = counts.find((c) => c.status === "done")?.n ?? 0;
-    expect(open).toBe(3);
+    expect(todo).toBe(3);
     expect(done).toBe(0);
   });
 
@@ -198,9 +198,9 @@ describe("pressurePurge — capacity-pressure", () => {
     q.push(f.id, "a");
     q.push(f.id, "b");
     const pulledA = q.pull(f.id, 60)!;
-    q.nack(f.id, pulledA.id);
+    q.fail(f.id, pulledA.id);
     const pulledB = q.pull(f.id, 60)!;
-    q.nack(f.id, pulledB.id);
+    q.fail(f.id, pulledB.id);
 
     const freed = purge.pressurePurge(f.id);
     expect(freed).toBe(true);
@@ -212,11 +212,11 @@ describe("pressurePurge — capacity-pressure", () => {
     expect(n.n).toBe(0);
   });
 
-  test("never deletes open or lock rows", async () => {
-    const f = await mkFifo("press-open-lock");
-    q.push(f.id, "open-a");
+  test("never deletes todo or lock rows", async () => {
+    const f = await mkFifo("press-todo-lock");
+    q.push(f.id, "todo-a");
     q.push(f.id, "lock-a");
-    q.pull(f.id, 60); // older one locks (open-a)
+    q.pull(f.id, 60); // older one locks (todo-a)
     // No done/fail rows exist — pressure purge should free nothing.
     const freed = purge.pressurePurge(f.id);
     expect(freed).toBe(false);

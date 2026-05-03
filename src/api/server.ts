@@ -165,9 +165,12 @@ async function routeWebhook(
     if (verb === "push") return webhookHandlers.postPush(req, ulid);
     if (verb === "pop") return webhookHandlers.postPop(req, ulid);
     if (verb === "pull") return webhookHandlers.postPull(req, ulid);
-    if (verb === "ack" && tail) return webhookHandlers.postAck(req, ulid, tail);
-    if (verb === "nack" && tail)
-      return webhookHandlers.postNack(req, ulid, tail);
+    if (verb === "done" && tail)
+      return webhookHandlers.postDone(req, ulid, tail);
+    if (verb === "fail" && tail)
+      return webhookHandlers.postFail(req, ulid, tail);
+    if (verb === "skip" && tail)
+      return webhookHandlers.postSkip(req, ulid, tail);
     if (verb === "retry" && tail) {
       return webhookHandlers.postRetry(req, ulid, tail);
     }

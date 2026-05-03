@@ -14,7 +14,7 @@ type Props = {
   filterQuery: string;
 };
 
-const STATUSES: ItemStatus[] = ["open", "lock", "done", "fail"];
+const STATUSES: ItemStatus[] = ["todo", "lock", "done", "fail", "skip"];
 const PUSH_TRUNCATE_LEN = 240;
 
 function relativeAge(unixSec: number): string {
@@ -39,7 +39,7 @@ export default function FifoDetail({
   onRenamed,
   filterQuery,
 }: Props) {
-  const [status, setStatus] = useState<ItemStatus>("open");
+  const [status, setStatus] = useState<ItemStatus>("todo");
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<StatusCounts>(fifo.counts);
   const [pushing, setPushing] = useState(false);
@@ -57,7 +57,7 @@ export default function FifoDetail({
   useKeyboardSafeBottom(addBarRef);
 
   const total = useMemo(
-    () => counts.open + counts.lock + counts.done + counts.fail,
+    () => counts.todo + counts.lock + counts.done + counts.fail + counts.skip,
     [counts],
   );
 
@@ -217,6 +217,9 @@ export default function FifoDetail({
             {it.status === "fail" && it.fail_reason && (
               <div className="item-fail-reason">{truncate(it.fail_reason)}</div>
             )}
+            {it.status === "skip" && it.skip_reason && (
+              <div className="item-fail-reason">{truncate(it.skip_reason)}</div>
+            )}
           </li>
         ))}
       </ul>
@@ -300,6 +303,14 @@ export default function FifoDetail({
                   <div className="dialog-fail-reason-label">Reason</div>
                   <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
                     {expanded.fail_reason}
+                  </pre>
+                </div>
+              )}
+              {expanded.status === "skip" && expanded.skip_reason && (
+                <div className="dialog-fail-reason">
+                  <div className="dialog-fail-reason-label">Reason</div>
+                  <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                    {expanded.skip_reason}
                   </pre>
                 </div>
               )}

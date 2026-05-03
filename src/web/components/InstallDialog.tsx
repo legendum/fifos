@@ -88,10 +88,11 @@ export default function InstallDialog({ onClose }: Props) {
               {`fifos push '{"build":42}' # append work
 fifos pop                 # consume oldest (fire-and-forget)
 fifos pull                # at-least-once (writes .fifos-lock)
-fifos ack                 # mark current as done
-fifos nack                # mark current as fail
+fifos done                # mark current as done
+fifos fail                # mark current as fail (retryable)
+fifos skip                # mark current as skip (terminal)
 fifos info                # show counts
-fifos list open           # show open items
+fifos list todo           # show todo items
 fifos open                # open in browser`}
             </pre>
           </section>

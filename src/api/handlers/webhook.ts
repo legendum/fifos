@@ -3,13 +3,14 @@ import { MAX_FAIL_REASON_BYTES, MAX_ITEM_BYTES } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { parseDuration } from "../../lib/duration.js";
 import {
-  ack,
+  done,
+  fail,
   getFifoByUlid,
-  nack,
   pop,
   pull,
   push,
   retry,
+  skip,
 } from "../../lib/queue.js";
 import { publish, publishUserFifos, subscribe } from "../../lib/sse.js";
 import { json } from "../json.js";
@@ -72,7 +73,7 @@ export async function postPush(req: Request, ulid: string): Promise<Response> {
   );
 }
 
-/** POST /w/:ulid/pop — atomically open→done. */
+/** POST /w/:ulid/pop — atomically todo→done. */
 export async function postPop(_req: Request, ulid: string): Promise<Response> {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
@@ -92,7 +93,7 @@ export async function postPop(_req: Request, ulid: string): Promise<Response> {
   });
 }
 
-/** POST /w/:ulid/pull[?lock=<dur>] — atomically open→lock. */
+/** POST /w/:ulid/pull[?lock=<dur>] — atomically todo→lock. */
 export async function postPull(req: Request, ulid: string): Promise<Response> {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
@@ -117,15 +118,15 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
   });
 }
 
-/** POST /w/:ulid/ack/:id — locked item → done. */
-export async function postAck(
+/** POST /w/:ulid/done/:id — locked item → done. */
+export async function postDone(
   _req: Request,
   ulid: string,
   itemUlid: string,
 ): Promise<Response> {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
-  const row = ack(fifo.id, itemUlid);
+  const row = done(fifo.id, itemUlid);
   if (!row) return json({ error: "not_locked" }, 404);
 
   const chargeError = await chargeWebhookWrite(fifo.user_id);
@@ -137,13 +138,13 @@ export async function postAck(
 }
 
 /**
- * POST /w/:ulid/nack/:id — locked item → fail.
+ * POST /w/:ulid/fail/:id — locked item → fail.
  *
  * Optional text/plain body is the failure reason (max 1 KiB). Empty body or
  * whitespace-only is treated as no reason (stored NULL). Mirrors the body
  * shape of `push` for CLI symmetry.
  */
-export async function postNack(
+export async function postFail(
   req: Request,
   ulid: string,
   itemUlid: string,
@@ -164,7 +165,7 @@ export async function postNack(
   const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf).trim();
   const reason = raw.length > 0 ? raw : null;
 
-  const row = nack(fifo.id, itemUlid, reason);
+  const row = fail(fifo.id, itemUlid, reason);
   if (!row) return json({ error: "not_locked" }, 404);
 
   const chargeError = await chargeWebhookWrite(fifo.user_id);
@@ -179,7 +180,49 @@ export async function postNack(
   return json({ id: row.id, status: row.status, fail_reason: row.fail_reason });
 }
 
-/** POST /w/:ulid/retry/:id — done/fail item → open at the tail (same id). */
+/**
+ * POST /w/:ulid/skip/:id — locked item → skip (terminal; retry refuses).
+ *
+ * Optional text/plain body is the skip reason (max 1 KiB). Same body contract
+ * as `fail`.
+ */
+export async function postSkip(
+  req: Request,
+  ulid: string,
+  itemUlid: string,
+): Promise<Response> {
+  const fifo = getFifoByUlid(ulid);
+  if (!fifo) return notFoundUlid();
+
+  const buf = await req.arrayBuffer();
+  if (buf.byteLength > MAX_FAIL_REASON_BYTES) {
+    return json(
+      {
+        error: "invalid_request",
+        message: `Reason exceeds ${MAX_FAIL_REASON_BYTES} bytes`,
+      },
+      400,
+    );
+  }
+  const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf).trim();
+  const reason = raw.length > 0 ? raw : null;
+
+  const row = skip(fifo.id, itemUlid, reason);
+  if (!row) return json({ error: "not_locked" }, 404);
+
+  const chargeError = await chargeWebhookWrite(fifo.user_id);
+  if (chargeError) return chargeError;
+  publish(`fifo:${fifo.id}`, "change", {
+    id: row.id,
+    status: row.status,
+    skip_reason: row.skip_reason,
+  });
+  notifyFifosChanged(fifo.user_id);
+
+  return json({ id: row.id, status: row.status, skip_reason: row.skip_reason });
+}
+
+/** POST /w/:ulid/retry/:id — done/fail item → todo at the tail (same id). */
 export async function postRetry(
   _req: Request,
   ulid: string,
@@ -209,7 +252,13 @@ export async function postRetry(
   return json({ id: row.id, status: row.status, position: row.position });
 }
 
-type StatusCounts = { open: number; lock: number; done: number; fail: number };
+type StatusCounts = {
+  todo: number;
+  lock: number;
+  done: number;
+  fail: number;
+  skip: number;
+};
 
 function getCounts(fifoId: number): StatusCounts {
   const db = getDb();
@@ -218,7 +267,7 @@ function getCounts(fifoId: number): StatusCounts {
       "SELECT status, COUNT(*) as n FROM items WHERE fifo_id = ? GROUP BY status",
     )
     .all(fifoId) as Array<{ status: keyof StatusCounts; n: number }>;
-  const counts: StatusCounts = { open: 0, lock: 0, done: 0, fail: 0 };
+  const counts: StatusCounts = { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 };
   for (const r of rows) counts[r.status] = r.n;
   return counts;
 }
@@ -256,7 +305,8 @@ export function getInfo(req: Request, ulid: string): Response {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
   const counts = getCounts(fifo.id);
-  const total = counts.open + counts.lock + counts.done + counts.fail;
+  const total =
+    counts.todo + counts.lock + counts.done + counts.fail + counts.skip;
   return respond(req, {
     name: fifo.name,
     slug: fifo.slug,
@@ -266,7 +316,7 @@ export function getInfo(req: Request, ulid: string): Response {
   });
 }
 
-/** GET /w/:ulid/peek?n=5 — up to N oldest open items, no status change. Free. */
+/** GET /w/:ulid/peek?n=5 — up to N oldest todo items, no status change. Free. */
 export function getPeek(req: Request, ulid: string): Response {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
@@ -277,7 +327,7 @@ export function getPeek(req: Request, ulid: string): Response {
     .query(
       `SELECT ulid AS id, position, status, data, locked_until, created_at, updated_at
          FROM items
-        WHERE fifo_id = ? AND status = 'open'
+        WHERE fifo_id = ? AND status = 'todo'
         ORDER BY position ASC
         LIMIT ?`,
     )
@@ -298,29 +348,38 @@ export function getPeek(req: Request, ulid: string): Response {
 export function getList(req: Request, ulid: string, status: string): Response {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
-  if (!["open", "lock", "done", "fail"].includes(status)) {
+  if (!["todo", "lock", "done", "fail", "skip"].includes(status)) {
     return json(
       {
         error: "invalid_request",
-        message: "status must be one of open|lock|done|fail",
+        message: "status must be one of todo|lock|done|fail|skip",
       },
       400,
     );
   }
   const url = new URL(req.url);
   const n = clampN(url.searchParams.get("n"));
-  const newestFirst = status === "done" || status === "fail";
+  const newestFirst =
+    status === "done" || status === "fail" || status === "skip";
 
   const reasonRaw = url.searchParams.get("reason");
-  const useReason = status === "fail" && reasonRaw && reasonRaw.length > 0;
+  const reasonCol =
+    status === "fail"
+      ? "fail_reason"
+      : status === "skip"
+        ? "skip_reason"
+        : null;
+  const useReason =
+    reasonCol !== null && reasonRaw !== null && reasonRaw.length > 0;
   const reasonPattern = useReason ? `%${escapeLike(reasonRaw)}%` : null;
 
   const db = getDb();
-  const sql = `SELECT ulid AS id, position, status, data, locked_until, fail_reason, created_at, updated_at
+  const sql = `SELECT ulid AS id, position, status, data, locked_until,
+                      fail_reason, skip_reason, created_at, updated_at
                  FROM items
                 WHERE fifo_id = ? AND status = ?${
                   useReason
-                    ? " AND fail_reason IS NOT NULL AND fail_reason LIKE ? ESCAPE '\\'"
+                    ? ` AND ${reasonCol} IS NOT NULL AND ${reasonCol} LIKE ? ESCAPE '\\'`
                     : ""
                 }
                 ORDER BY position ${newestFirst ? "DESC" : "ASC"}

@@ -120,10 +120,11 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.fifos[0].slug).toBe("builds");
     expect(body.fifos[0].position).toBe(0);
     expect(body.fifos[0].counts).toEqual({
-      open: 0,
+      todo: 0,
       lock: 0,
       done: 0,
       fail: 0,
+      skip: 0,
     });
     expect(body.fifos[1].slug).toBe("my-deploy-queue");
     expect(body.fifos[1].position).toBe(1);
@@ -133,7 +134,7 @@ describe("Fifos CRUD — self-hosted", () => {
     const { status, body } = await jget("/builds");
     expect(status).toBe(200);
     expect(body.slug).toBe("builds");
-    expect(body.counts).toEqual({ open: 0, lock: 0, done: 0, fail: 0 });
+    expect(body.counts).toEqual({ todo: 0, lock: 0, done: 0, fail: 0, skip: 0 });
     expect(body.items).toEqual([]);
   });
 
@@ -214,7 +215,7 @@ describe("Fifos CRUD — self-hosted", () => {
 
     // Sanity: counts reflect the pushes.
     const detail = await jget("/third");
-    expect(detail.body.counts.open).toBe(2);
+    expect(detail.body.counts.todo).toBe(2);
 
     const del = await jdelete("/third");
     expect(del.status).toBe(200);
@@ -270,12 +271,12 @@ describe("Fifos CRUD — self-hosted", () => {
         method: "POST",
       });
       const pulled = (await pull.json()) as { id: string };
-      const nack = await fetch(`${base}/w/${fifoUlid}/nack/${pulled.id}`, {
+      const failRes = await fetch(`${base}/w/${fifoUlid}/fail/${pulled.id}`, {
         method: "POST",
         headers: { "Content-Type": "text/plain" },
         body: r,
       });
-      expect(nack.status).toBe(200);
+      expect(failRes.status).toBe(200);
     }
 
     // Substring match — case-insensitive, returns 2 items.
@@ -306,16 +307,16 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(del.status).toBe(200);
   });
 
-  test("POST /w/:ulid/nack/:id rejects bodies over 1 KiB with 400", async () => {
-    // Need a locked item to nack — create a fifo, push, pull.
-    const create = await jpost("/", { name: "nack-cap" });
+  test("POST /w/:ulid/fail/:id rejects bodies over 1 KiB with 400", async () => {
+    // Need a locked item to fail — create a fifo, push, pull.
+    const create = await jpost("/", { name: "fail-cap" });
     expect(create.status).toBe(201);
     const fifoUlid: string = create.body.ulid;
 
     const pushRes = await fetch(`${base}/w/${fifoUlid}/push`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: "needs nack",
+      body: "needs fail",
     });
     expect(pushRes.status).toBe(201);
 
@@ -326,13 +327,13 @@ describe("Fifos CRUD — self-hosted", () => {
     const pulled = (await pullRes.json()) as { id: string };
 
     const oversized = "x".repeat(1025);
-    const nackRes = await fetch(`${base}/w/${fifoUlid}/nack/${pulled.id}`, {
+    const failRes = await fetch(`${base}/w/${fifoUlid}/fail/${pulled.id}`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: oversized,
     });
-    expect(nackRes.status).toBe(400);
-    const j = (await nackRes.json()) as { error: string };
+    expect(failRes.status).toBe(400);
+    const j = (await failRes.json()) as { error: string };
     expect(j.error).toBe("invalid_request");
   });
 });

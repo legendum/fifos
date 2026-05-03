@@ -194,20 +194,24 @@ function formatText(payload: any): string {
                 it.data ?? "",
                 80,
               )}`;
-              return it.status === "fail" && it.fail_reason
-                ? `${head}\n      ↳ ${truncate(it.fail_reason, 100)}`
-                : head;
+              if (it.status === "fail" && it.fail_reason) {
+                return `${head}\n      ↳ ${truncate(it.fail_reason, 100)}`;
+              }
+              if (it.status === "skip" && it.skip_reason) {
+                return `${head}\n      ↳ ${truncate(it.skip_reason, 100)}`;
+              }
+              return head;
             })
             .join("\n")
         : "(empty)";
     }
     if (payload.counts) {
       const c = payload.counts;
-      const total = c.open + c.lock + c.done + c.fail;
+      const total = c.todo + c.lock + c.done + c.fail + c.skip;
       return [
         `fifo: ${payload.name}  (${payload.slug})`,
         `ulid: ${payload.ulid}`,
-        `open: ${c.open}, lock: ${c.lock}, done: ${c.done}, fail: ${c.fail}  (total: ${total})`,
+        `todo: ${c.todo}, lock: ${c.lock}, done: ${c.done}, fail: ${c.fail}, skip: ${c.skip}  (total: ${total})`,
       ].join("\n");
     }
     return JSON.stringify(payload);
@@ -429,19 +433,24 @@ function clearLockFile(): void {
   if (existsSync(path)) unlinkSync(path);
 }
 
-async function cmdAck(baseUrl: string, _parsed: Parsed): Promise<number> {
-  return finishLocked(baseUrl, "ack");
+async function cmdDone(baseUrl: string, _parsed: Parsed): Promise<number> {
+  return finishLocked(baseUrl, "done");
 }
-async function cmdNack(baseUrl: string, parsed: Parsed): Promise<number> {
+async function cmdFail(baseUrl: string, parsed: Parsed): Promise<number> {
   // Optional reason: positional args take precedence; otherwise read stdin if
   // it's a pipe (mirrors `push`). Empty body is valid — server stores NULL.
   const fromArg = parsed.positional.join(" ");
   const reason = fromArg || (await readStdin());
-  return finishLocked(baseUrl, "nack", reason);
+  return finishLocked(baseUrl, "fail", reason);
+}
+async function cmdSkip(baseUrl: string, parsed: Parsed): Promise<number> {
+  const fromArg = parsed.positional.join(" ");
+  const reason = fromArg || (await readStdin());
+  return finishLocked(baseUrl, "skip", reason);
 }
 async function finishLocked(
   baseUrl: string,
-  verb: "ack" | "nack",
+  verb: "done" | "fail" | "skip",
   body?: string,
 ): Promise<number> {
   const id = readLockFile();
@@ -523,16 +532,16 @@ async function cmdPeek(baseUrl: string, parsed: Parsed): Promise<number> {
 
 async function cmdList(baseUrl: string, parsed: Parsed): Promise<number> {
   const status = parsed.positional[0];
-  if (!status || !["open", "lock", "done", "fail"].includes(status)) {
-    console.error("list: status must be one of open|lock|done|fail");
+  if (!status || !["todo", "lock", "done", "fail", "skip"].includes(status)) {
+    console.error("list: status must be one of todo|lock|done|fail|skip");
     return 2;
   }
   const n = Number(parsed.flags.get("items") ?? 10);
   const reason = parsed.flags.get("reason");
   let path = `/list/${status}?n=${n}`;
   if (typeof reason === "string" && reason.length > 0) {
-    if (status !== "fail") {
-      console.error("list: --reason only applies to status 'fail'");
+    if (status !== "fail" && status !== "skip") {
+      console.error("list: --reason only applies to 'fail' or 'skip'");
       return 2;
     }
     path += `&reason=${encodeURIComponent(reason)}`;
@@ -599,17 +608,19 @@ Usage:
   fifos                          info
   fifos push "data"              push one item (or pipe via stdin)
   fifos push --key <s> "data"    idempotent push (1h dedupe)
-  fifos pop                      pop oldest open item (exit 1 if empty)
+  fifos pop                      pop oldest todo item (exit 1 if empty)
   fifos pop --block [--timeout N]  wait via SSE for a push, then pop
   fifos pull [--lock <dur>]      lock + write .fifos-lock (e.g. 600, 5m, 1h)
-  fifos ack                      mark the locked item done (clears .fifos-lock)
-  fifos nack [reason...]         mark it fail; reason is positional args or stdin (max 1 KiB)
+  fifos done                     mark the locked item done (clears .fifos-lock)
+  fifos fail [reason...]         mark it fail (retryable); reason is positional args or stdin (max 1 KiB)
+  fifos skip [reason...]         mark it skip (terminal — retry refused); same reason rules
   fifos status <id>              one item's state
-  fifos retry <id>               move done/fail back to open at the tail
-  fifos peek [--items=N]         oldest N open items
+  fifos retry <id>               move done/fail back to todo at the tail (skip is terminal)
+  fifos peek [--items=N]         oldest N todo items
   fifos info                     counts summary
-  fifos list <open|lock|done|fail> [--items=N]
+  fifos list <todo|lock|done|fail|skip> [--items=N]
   fifos list fail --reason <substr>      filter fail by case-insensitive substring of fail_reason
+  fifos list skip --reason <substr>      filter skip by case-insensitive substring of skip_reason
   fifos open                     open this fifo's page in the browser
   fifos skill                    install agent skill for Claude / Cursor
   fifos help                     this message
@@ -653,11 +664,14 @@ async function main() {
     case "pull":
       code = await cmdPull(baseUrl, parsed);
       break;
-    case "ack":
-      code = await cmdAck(baseUrl, parsed);
+    case "done":
+      code = await cmdDone(baseUrl, parsed);
       break;
-    case "nack":
-      code = await cmdNack(baseUrl, parsed);
+    case "fail":
+      code = await cmdFail(baseUrl, parsed);
+      break;
+    case "skip":
+      code = await cmdSkip(baseUrl, parsed);
       break;
     case "status":
       code = await cmdStatus(baseUrl, parsed);

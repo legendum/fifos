@@ -20,15 +20,15 @@ differences:
    fifos pop --block # wait until an item is ready (via polling or SSE?)
    fifos peek --items=5
    fifos pull # pop with lock
-   fifos ack  # ack the pulled item
-   fifos nack # nack the pulled item
+   fifos done # mark the pulled item done
+   fifos fail # mark the pulled item fail
    fifos info # return fifo name, how many items are in the fifo, etc
    fifos list done --items=5
    fifos list fail --items=5
-   fifos list open --items=5
+   fifos list todo --items=5
    fifos list lock
 
-7) Status. I believe items should have a status, e.g. "open", "lock", "done", "fail"
+7) Status. I believe items should have a status, e.g. "todo", "lock", "done", "fail"
 
 8) Items in "done" and "fail" states should be purged periodically
 
@@ -39,4 +39,4 @@ Markdown or YAML. We don't really care.
 9) The UI will look and feel very similar to the "todos" UI, e.g. click the logo
 top left to see instructions to install the "fifos" CLI, and click to copy a
 FIFO webhook (shown below the FIFO name). We won't have undo/redo of course.
-Instead we may include a status filter for open/lock/done/fail
+Instead we may include a status filter for todo/lock/done/fail

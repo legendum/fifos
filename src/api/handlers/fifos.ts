@@ -19,10 +19,11 @@ type FifoRow = {
 };
 
 type StatusCounts = {
-  open: number;
+  todo: number;
   lock: number;
   done: number;
   fail: number;
+  skip: number;
 };
 
 type FifoSummary = {
@@ -36,12 +37,12 @@ type FifoSummary = {
 
 type CountRow = {
   fifo_id: number;
-  status: "open" | "lock" | "done" | "fail";
+  status: "todo" | "lock" | "done" | "fail" | "skip";
   n: number;
 };
 
 function emptyCounts(): StatusCounts {
-  return { open: 0, lock: 0, done: 0, fail: 0 };
+  return { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 };
 }
 
 function getCountsByFifo(fifoIds: number[]): Map<number, StatusCounts> {
@@ -215,21 +216,23 @@ export function getFifo(
   if (!row) return json({ error: "not_found", reason: "fifo" }, 404);
 
   const url = new URL(req.url);
-  const statusParam = url.searchParams.get("status") ?? "open";
-  if (!["open", "lock", "done", "fail"].includes(statusParam)) {
+  const statusParam = url.searchParams.get("status") ?? "todo";
+  if (!["todo", "lock", "done", "fail", "skip"].includes(statusParam)) {
     return json(
       {
         error: "invalid_request",
-        message: "status must be one of open|lock|done|fail",
+        message: "status must be one of todo|lock|done|fail|skip",
       },
       400,
     );
   }
 
-  const newestFirst = statusParam === "done" || statusParam === "fail";
+  const newestFirst =
+    statusParam === "done" || statusParam === "fail" || statusParam === "skip";
   const items = db
     .query(
-      `SELECT ulid AS id, position, status, data, locked_until, fail_reason, created_at, updated_at
+      `SELECT ulid AS id, position, status, data, locked_until,
+              fail_reason, skip_reason, created_at, updated_at
          FROM items
         WHERE fifo_id = ? AND status = ?
         ORDER BY position ${newestFirst ? "DESC" : "ASC"}`,

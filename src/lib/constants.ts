@@ -9,13 +9,13 @@ export const FIFOS_DOMAIN =
 
 /** Default lock TTL on `pull`, in seconds. Server clamps the override to [10, 3600]. */
 export const FIFOS_LOCK_TIMEOUT_SECONDS = Number(
-  process.env.FIFOS_LOCK_TIMEOUT_SECONDS || 300,
+  process.env.FIFOS_LOCK_TIMEOUT_SECONDS || 1800,
 );
 
 export const LOCK_TIMEOUT_MIN_SECONDS = 10;
 export const LOCK_TIMEOUT_MAX_SECONDS = 3600;
 
-/** Done/fail retention before the periodic sweep deletes them. */
+/** Done/fail/skip retention before the periodic sweep deletes them. */
 export const FIFOS_RETENTION_SECONDS = Number(
   process.env.FIFOS_RETENTION_SECONDS || 60 * 60 * 24 * 7,
 );
@@ -31,7 +31,7 @@ export const MAX_ITEMS_PER_FIFO = Number(
 
 export const MAX_ITEM_BYTES = Number(process.env.FIFOS_MAX_ITEM_BYTES || 65536);
 
-/** Max length of the optional `nack` reason body. Diagnostic text, not a payload. */
+/** Max length of the optional `fail` reason body. Diagnostic text, not a payload. */
 export const MAX_FAIL_REASON_BYTES = 1024;
 
 export const MAX_FIFOS_PER_USER = Number(

@@ -72,7 +72,7 @@ describe("queue.push", () => {
       const r = q.push(f.id, `item-${i}`);
       expect(r).not.toBeNull();
     }
-    // Cap is 5, all are 'open' so pressure-purge can't free anything.
+    // Cap is 5, all are 'todo' so pressure-purge can't free anything.
     const overflow = q.push(f.id, "too-much");
     expect(overflow).toBeNull();
   });
@@ -175,7 +175,7 @@ describe("queue.push idempotency", () => {
 });
 
 describe("queue.pop", () => {
-  test("pop returns oldest open and marks done, FIFO order", async () => {
+  test("pop returns oldest todo and marks done, FIFO order", async () => {
     const f = await mkFifo("pop-order");
     q.push(f.id, "first");
     q.push(f.id, "second");
@@ -192,9 +192,9 @@ describe("queue.pop", () => {
   });
 });
 
-describe("queue.pull / ack / nack", () => {
-  test("pull marks lock with locked_until, ack flips to done", async () => {
-    const f = await mkFifo("pull-ack");
+describe("queue.pull / done / fail", () => {
+  test("pull marks lock with locked_until, done flips to done", async () => {
+    const f = await mkFifo("pull-done");
     const pushed = q.push(f.id, "work");
     const pulled = q.pull(f.id, 60);
     expect(pulled).not.toBeNull();
@@ -202,29 +202,29 @@ describe("queue.pull / ack / nack", () => {
     expect(pulled!.status).toBe("lock");
     expect(pulled!.locked_until).toBeGreaterThan(Math.floor(Date.now() / 1000));
 
-    const acked = q.ack(f.id, pulled!.id);
-    expect(acked).not.toBeNull();
-    expect(acked!.status).toBe("done");
-    expect(acked!.locked_until).toBeNull();
+    const finished = q.done(f.id, pulled!.id);
+    expect(finished).not.toBeNull();
+    expect(finished!.status).toBe("done");
+    expect(finished!.locked_until).toBeNull();
   });
 
-  test("nack marks fail", async () => {
-    const f = await mkFifo("pull-nack");
+  test("fail marks fail", async () => {
+    const f = await mkFifo("pull-fail");
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
-    const nacked = q.nack(f.id, pulled.id);
-    expect(nacked!.status).toBe("fail");
+    const failed = q.fail(f.id, pulled.id);
+    expect(failed!.status).toBe("fail");
     // No reason supplied → fail_reason stays NULL.
-    expect(nacked!.fail_reason).toBeNull();
+    expect(failed!.fail_reason).toBeNull();
   });
 
-  test("nack with a reason persists fail_reason", async () => {
-    const f = await mkFifo("pull-nack-reason");
+  test("fail with a reason persists fail_reason", async () => {
+    const f = await mkFifo("pull-fail-reason");
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
-    const nacked = q.nack(f.id, pulled.id, "exit code 42");
-    expect(nacked!.status).toBe("fail");
-    expect(nacked!.fail_reason).toBe("exit code 42");
+    const failed = q.fail(f.id, pulled.id, "exit code 42");
+    expect(failed!.status).toBe("fail");
+    expect(failed!.fail_reason).toBe("exit code 42");
 
     // And the read-back reflects it too.
     const fresh = getDb()
@@ -233,35 +233,35 @@ describe("queue.pull / ack / nack", () => {
     expect(fresh.fail_reason).toBe("exit code 42");
   });
 
-  test("ack does NOT touch fail_reason and never sets one", async () => {
-    const f = await mkFifo("ack-no-reason");
+  test("done does NOT touch fail_reason and never sets one", async () => {
+    const f = await mkFifo("done-no-reason");
     q.push(f.id, "ok");
     const pulled = q.pull(f.id, 60)!;
-    const acked = q.ack(f.id, pulled.id);
-    expect(acked!.status).toBe("done");
-    expect(acked!.fail_reason).toBeNull();
+    const finished = q.done(f.id, pulled.id);
+    expect(finished!.status).toBe("done");
+    expect(finished!.fail_reason).toBeNull();
   });
 
-  test("ack/nack on already-acked item returns null (not_locked)", async () => {
-    const f = await mkFifo("ack-twice");
+  test("done/fail on already-finalized item returns null (not_locked)", async () => {
+    const f = await mkFifo("done-twice");
     q.push(f.id, "x");
     const pulled = q.pull(f.id, 60)!;
-    expect(q.ack(f.id, pulled.id)).not.toBeNull();
-    // Item is now 'done' — re-ack must return null (handler turns this into 404 not_locked).
-    expect(q.ack(f.id, pulled.id)).toBeNull();
-    expect(q.nack(f.id, pulled.id)).toBeNull();
+    expect(q.done(f.id, pulled.id)).not.toBeNull();
+    // Item is now 'done' — re-done must return null (handler turns this into 404 not_locked).
+    expect(q.done(f.id, pulled.id)).toBeNull();
+    expect(q.fail(f.id, pulled.id)).toBeNull();
   });
 
-  test("ack on unknown ulid returns null", async () => {
-    const f = await mkFifo("ack-unknown");
-    expect(q.ack(f.id, "ZZZZZZZZZZZZZZZZZZZZZZZZZZ")).toBeNull();
+  test("done on unknown ulid returns null", async () => {
+    const f = await mkFifo("done-unknown");
+    expect(q.done(f.id, "ZZZZZZZZZZZZZZZZZZZZZZZZZZ")).toBeNull();
   });
 
-  test("nack reason is preserved across ItemRow read paths", async () => {
-    const f = await mkFifo("nack-readback");
+  test("fail reason is preserved across ItemRow read paths", async () => {
+    const f = await mkFifo("fail-readback");
     q.push(f.id, "data");
     const pulled = q.pull(f.id, 60)!;
-    q.nack(f.id, pulled.id, "timeout after 30s");
+    q.fail(f.id, pulled.id, "timeout after 30s");
 
     // Direct SELECT (mirrors the read handlers).
     const row = getDb()
@@ -275,13 +275,13 @@ describe("queue.pull / ack / nack", () => {
 });
 
 describe("queue.pull — lock TTL clamping", () => {
-  test("null/missing override falls back to default 300s", async () => {
+  test("null/missing override falls back to default 1800s (30 min)", async () => {
     const f = await mkFifo("ttl-default");
     q.push(f.id, "x");
     const before = Math.floor(Date.now() / 1000);
     const pulled = q.pull(f.id, null)!;
-    expect(pulled.locked_until! - before).toBeGreaterThanOrEqual(299);
-    expect(pulled.locked_until! - before).toBeLessThanOrEqual(301);
+    expect(pulled.locked_until! - before).toBeGreaterThanOrEqual(1799);
+    expect(pulled.locked_until! - before).toBeLessThanOrEqual(1801);
   });
 
   test("below-min clamps to 10s", async () => {
@@ -313,8 +313,8 @@ describe("queue.pull — lock TTL clamping", () => {
 });
 
 describe("queue — stale-lock & lazy reclaim", () => {
-  test("ack on a stale lock still succeeds (no reclaim has fired yet)", async () => {
-    const f = await mkFifo("stale-ack");
+  test("done on a stale lock still succeeds (no reclaim has fired yet)", async () => {
+    const f = await mkFifo("stale-done");
     q.push(f.id, "long-running");
     const pulled = q.pull(f.id, 60)!;
     // Force the lock past its deadline without anyone calling pop/pull.
@@ -323,10 +323,10 @@ describe("queue — stale-lock & lazy reclaim", () => {
       "UPDATE items SET locked_until = strftime('%s','now') - 100 WHERE ulid = ?",
       pulled.id,
     );
-    // ack deliberately does NOT check locked_until.
-    const acked = q.ack(f.id, pulled.id);
-    expect(acked).not.toBeNull();
-    expect(acked!.status).toBe("done");
+    // done deliberately does NOT check locked_until.
+    const finished = q.done(f.id, pulled.id);
+    expect(finished).not.toBeNull();
+    expect(finished!.status).toBe("done");
   });
 
   test("lazy reclaim on next pop returns the expired-locked item", async () => {
@@ -339,15 +339,15 @@ describe("queue — stale-lock & lazy reclaim", () => {
       "UPDATE items SET locked_until = strftime('%s','now') - 100 WHERE ulid = ?",
       pulled.id,
     );
-    // Next pop reclaims it back to open then immediately pops it as done.
+    // Next pop reclaims it back to todo then immediately pops it as done.
     const popped = q.pop(f.id);
     expect(popped).not.toBeNull();
     expect(popped!.id).toBe(pulled.id);
     expect(popped!.status).toBe("done");
   });
 
-  test("after lazy reclaim, ack on the (now-open) item returns null", async () => {
-    const f = await mkFifo("reclaim-then-ack");
+  test("after lazy reclaim, done on the (now-todo) item returns null", async () => {
+    const f = await mkFifo("reclaim-then-done");
     q.push(f.id, "x");
     q.push(f.id, "y"); // need a second item so the next pull sees one
     const pulled = q.pull(f.id, 60)!;
@@ -360,13 +360,13 @@ describe("queue — stale-lock & lazy reclaim", () => {
     // (because its position is older than the second item).
     const repulled = q.pull(f.id, 60)!;
     expect(repulled.id).toBe(pulled.id);
-    // Now if we ack with the original ulid it succeeds (it IS locked again).
-    expect(q.ack(f.id, pulled.id)).not.toBeNull();
+    // Now if we mark done with the original ulid it succeeds (it IS locked again).
+    expect(q.done(f.id, pulled.id)).not.toBeNull();
   });
 });
 
 describe("queue.retry", () => {
-  test("retry on done → open at tail with new position; ulid retained", async () => {
+  test("retry on done → todo at tail with new position; ulid retained", async () => {
     const f = await mkFifo("retry-done");
     q.push(f.id, "first");
     q.push(f.id, "second");
@@ -376,27 +376,27 @@ describe("queue.retry", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.row.id).toBe(popped.id);
-      expect(r.row.status).toBe("open");
+      expect(r.row.status).toBe("todo");
       // New position must be > original position (tail).
       expect(r.row.position).toBeGreaterThan(popped.position);
     }
   });
 
-  test("retry on fail → open", async () => {
+  test("retry on fail → todo", async () => {
     const f = await mkFifo("retry-fail");
     q.push(f.id, "x");
     const pulled = q.pull(f.id, 60)!;
-    q.nack(f.id, pulled.id);
+    q.fail(f.id, pulled.id);
     const r = q.retry(f.id, pulled.id);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.row.status).toBe("open");
+    if (r.ok) expect(r.row.status).toBe("todo");
   });
 
   test("retry clears fail_reason back to NULL", async () => {
     const f = await mkFifo("retry-clears-reason");
     q.push(f.id, "x");
     const pulled = q.pull(f.id, 60)!;
-    q.nack(f.id, pulled.id, "hard fail");
+    q.fail(f.id, pulled.id, "hard fail");
     const before = getDb()
       .query("SELECT fail_reason FROM items WHERE ulid = ?")
       .get(pulled.id) as { fail_reason: string };
@@ -405,7 +405,7 @@ describe("queue.retry", () => {
     const r = q.retry(f.id, pulled.id);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.row.status).toBe("open");
+      expect(r.row.status).toBe("todo");
       expect(r.row.fail_reason).toBeNull();
     }
     const after = getDb()
@@ -414,8 +414,8 @@ describe("queue.retry", () => {
     expect(after.fail_reason).toBeNull();
   });
 
-  test("retry on open → wrong_status", async () => {
-    const f = await mkFifo("retry-open");
+  test("retry on todo → wrong_status", async () => {
+    const f = await mkFifo("retry-todo");
     const pushed = q.push(f.id, "x")!;
     const r = q.retry(f.id, pushed.id);
     expect(r.ok).toBe(false);
@@ -436,5 +436,44 @@ describe("queue.retry", () => {
     const r = q.retry(f.id, "ZZZZZZZZZZZZZZZZZZZZZZZZZZ");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("not_found");
+  });
+
+  test("retry on skip → wrong_status (skip is terminal)", async () => {
+    const f = await mkFifo("retry-skip");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    q.skip(f.id, pulled.id, "deprecated");
+    const r = q.retry(f.id, pulled.id);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("wrong_status");
+  });
+});
+
+describe("queue.skip", () => {
+  test("skip marks 'skip' and persists skip_reason", async () => {
+    const f = await mkFifo("pull-skip-reason");
+    q.push(f.id, "broken");
+    const pulled = q.pull(f.id, 60)!;
+    const skipped = q.skip(f.id, pulled.id, "malformed payload");
+    expect(skipped!.status).toBe("skip");
+    expect(skipped!.skip_reason).toBe("malformed payload");
+    expect(skipped!.fail_reason).toBeNull();
+  });
+
+  test("skip without a reason stores NULL", async () => {
+    const f = await mkFifo("pull-skip-noreason");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    const skipped = q.skip(f.id, pulled.id);
+    expect(skipped!.status).toBe("skip");
+    expect(skipped!.skip_reason).toBeNull();
+  });
+
+  test("skip on already-finalized item returns null (not_locked)", async () => {
+    const f = await mkFifo("skip-twice");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    expect(q.skip(f.id, pulled.id)).not.toBeNull();
+    expect(q.skip(f.id, pulled.id)).toBeNull();
   });
 });

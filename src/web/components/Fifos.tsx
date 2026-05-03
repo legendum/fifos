@@ -327,14 +327,20 @@ export default function Fifos({
 function CountsPill({
   counts,
 }: {
-  counts: { open: number; lock: number; done: number; fail: number };
+  counts: {
+    todo: number;
+    lock: number;
+    done: number;
+    fail: number;
+    skip: number;
+  };
 }) {
   return (
     <span
       className="cat-count"
-      title={`open ${counts.open} · lock ${counts.lock} · done ${counts.done} · fail ${counts.fail}`}
+      title={`todo ${counts.todo} · lock ${counts.lock} · done ${counts.done} · fail ${counts.fail} · skip ${counts.skip}`}
     >
-      {counts.open}·{counts.lock}·{counts.done}·{counts.fail}
+      {counts.todo}·{counts.lock}·{counts.done} {counts.fail}·{counts.skip}
     </span>
   );
 }

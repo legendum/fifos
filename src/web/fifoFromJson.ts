@@ -5,7 +5,13 @@ export type FifoDetailJson = {
   name: string;
   slug: string;
   ulid: string;
-  counts?: { open: number; lock: number; done: number; fail: number };
+  counts?: {
+    todo: number;
+    lock: number;
+    done: number;
+    fail: number;
+    skip: number;
+  };
   items?: unknown[];
 };
 
@@ -16,7 +22,7 @@ export function fifoFromDetailJson(data: FifoDetailJson): FifoEntry {
     slug: data.slug,
     ulid: data.ulid,
     position: 0,
-    counts: data.counts ?? { open: 0, lock: 0, done: 0, fail: 0 },
+    counts: data.counts ?? { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 },
     created_at: 0,
   };
 }

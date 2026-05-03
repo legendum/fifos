@@ -99,7 +99,7 @@ describe("CLI exit codes", () => {
     expect(r.exitCode).toBe(0);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.slug).toBe("cli-test");
-    expect(parsed.counts).toEqual({ open: 0, lock: 0, done: 0, fail: 0 });
+    expect(parsed.counts).toEqual({ todo: 0, lock: 0, done: 0, fail: 0, skip: 0 });
   });
 
   test("push 'hello' returns the new id and exits 0", async () => {
@@ -112,7 +112,7 @@ describe("CLI exit codes", () => {
     const r = await runCli(["push"], { stdin: "via-stdin" });
     expect(r.exitCode).toBe(0);
 
-    // peek confirms 2 open items now (from this and the prior push test).
+    // peek confirms 2 todo items now (from this and the prior push test).
     const peek = await fetch(`${base}/w/${fifoUlid}/peek`);
     const j = (await peek.json()) as { items: { data: string }[] };
     expect(j.items.map((i) => i.data)).toContain("via-stdin");
@@ -165,9 +165,9 @@ describe("CLI exit codes", () => {
 });
 
 describe("CLI .fifos-lock lifecycle", () => {
-  test("pull writes .fifos-lock; ack deletes it", async () => {
+  test("pull writes .fifos-lock; done deletes it", async () => {
     // Seed: push one item.
-    const push = await runCli(["push", "ack-me"]);
+    const push = await runCli(["push", "done-me"]);
     expect(push.exitCode).toBe(0);
 
     const lockPath = join(workDir, ".fifos-lock");
@@ -175,37 +175,37 @@ describe("CLI .fifos-lock lifecycle", () => {
 
     const pull = await runCli(["pull"]);
     expect(pull.exitCode).toBe(0);
-    expect(pull.stdout.trim()).toBe("ack-me");
+    expect(pull.stdout.trim()).toBe("done-me");
     expect(existsSync(lockPath)).toBe(true);
     const lockId = readFileSync(lockPath, "utf-8").trim();
     expect(lockId).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i);
 
-    const ack = await runCli(["ack"]);
-    expect(ack.exitCode).toBe(0);
+    const done = await runCli(["done"]);
+    expect(done.exitCode).toBe(0);
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test("nack deletes the lock file", async () => {
-    await runCli(["push", "nack-me"]);
+  test("fail deletes the lock file", async () => {
+    await runCli(["push", "fail-me"]);
     const r = await runCli(["pull"]);
     expect(r.exitCode).toBe(0);
 
     const lockPath = join(workDir, ".fifos-lock");
     expect(existsSync(lockPath)).toBe(true);
 
-    const nack = await runCli(["nack"]);
-    expect(nack.exitCode).toBe(0);
+    const failRes = await runCli(["fail"]);
+    expect(failRes.exitCode).toBe(0);
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test("nack with positional reason persists fail_reason", async () => {
+  test("fail with positional reason persists fail_reason", async () => {
     const push = await runCli(["push", "boom-target"]);
     expect(push.exitCode).toBe(0);
     const itemId = push.stdout.trim();
     expect(await runCli(["pull"]).then((r) => r.exitCode)).toBe(0);
 
-    const nack = await runCli(["nack", "ran", "out", "of", "memory"]);
-    expect(nack.exitCode).toBe(0);
+    const failRes = await runCli(["fail", "ran", "out", "of", "memory"]);
+    expect(failRes.exitCode).toBe(0);
 
     const status = await fetch(`${base}/w/${fifoUlid}/status/${itemId}`);
     const j = (await status.json()) as {
@@ -216,24 +216,24 @@ describe("CLI .fifos-lock lifecycle", () => {
     expect(j.fail_reason).toBe("ran out of memory");
   });
 
-  test("nack reads stdin when no positional reason is given", async () => {
+  test("fail reads stdin when no positional reason is given", async () => {
     const push = await runCli(["push", "stdin-target"]);
     expect(push.exitCode).toBe(0);
     const itemId = push.stdout.trim();
     expect(await runCli(["pull"]).then((r) => r.exitCode)).toBe(0);
 
-    const nack = await runCli(["nack"], { stdin: "stack trace from logs" });
-    expect(nack.exitCode).toBe(0);
+    const failRes = await runCli(["fail"], { stdin: "stack trace from logs" });
+    expect(failRes.exitCode).toBe(0);
 
     const status = await fetch(`${base}/w/${fifoUlid}/status/${itemId}`);
     const j = (await status.json()) as { fail_reason: string | null };
     expect(j.fail_reason).toBe("stack trace from logs");
   });
 
-  test("ack with no .fifos-lock: exit 2", async () => {
+  test("done with no .fifos-lock: exit 2", async () => {
     const lockPath = join(workDir, ".fifos-lock");
     if (existsSync(lockPath)) unlinkSync(lockPath);
-    const r = await runCli(["ack"]);
+    const r = await runCli(["done"]);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain(".fifos-lock");
   });

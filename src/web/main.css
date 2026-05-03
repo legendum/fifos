@@ -1013,10 +1013,11 @@ button.dialog-code-install-wrap {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.item-status--open { background: #1e3a8a; color: #bfdbfe; }
+.item-status--todo { background: #1e3a8a; color: #bfdbfe; }
 .item-status--lock { background: #78350f; color: #fed7aa; }
 .item-status--done { background: #14532d; color: #bbf7d0; }
 .item-status--fail { background: #7f1d1d; color: #fecaca; }
+.item-status--skip { background: #334155; color: #cbd5e1; }
 .item-body {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;

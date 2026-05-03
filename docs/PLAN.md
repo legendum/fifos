@@ -84,7 +84,7 @@ Routes per SPEC §6.2:
 |---|---|
 | `GET /` | `SELECT … FROM fifos WHERE user_id=? ORDER BY position, id`. Build `counts` per row via grouped subquery on `items`. |
 | `POST /` | Validate name; reject reserved slugs `f`, `w`; check `MAX_FIFOS_PER_USER`; allocate ULID; `position = COALESCE(MAX(position),-1)+1`; charge 2 cr (Phase 8); emit notify. |
-| `GET /:slug` | Content-negotiated HTML / JSON / YAML; default status filter = `open`. |
+| `GET /:slug` | Content-negotiated HTML / JSON / YAML; default status filter = `todo`. |
 | `PATCH /:slug` | Rename only — body `{ name }` required. Update `slug` from name (slugify same as todos), check uniqueness, `updated_at = now`. |
 | `PATCH /f/reorder` | Body `{ order: [slug, …] }`. Loop `UPDATE fifos SET position=? WHERE user_id=? AND slug=?` like todos `reorderLists`. |
 | `DELETE /:slug` | Cascade-delete via FK `ON DELETE CASCADE`. |
@@ -97,11 +97,11 @@ Wire into `src/api/server.ts`. Reserved slug list: `["f", "w", "auth"]`.
 
 ---
 
-## Phase 4 — Webhook write handlers (push/pop/pull/ack/nack)
+## Phase 4 — Webhook write handlers (push/pop/pull/done/fail/skip)
 
 **Goal:** the queue verbs work atomically.
 
-File: `src/api/handlers/webhook.ts` + `src/lib/queue.ts` (new — keeps the SQL-heavy pop/pull/ack/nack out of the handler).
+File: `src/api/handlers/webhook.ts` + `src/lib/queue.ts` (new — keeps the SQL-heavy pop/pull/done/fail/skip out of the handler).
 
 `src/lib/queue.ts` exports:
 
@@ -111,17 +111,18 @@ pop(fifoId)                                 → Item | null  (status set to 'don
 pull(fifoId, lockSeconds)                   → Item | null  (status set to 'lock', locked_until set)
                                                             // lockSeconds: caller-supplied or env default;
                                                             // queue.ts clamps to [10, 3600]
-ack(fifoId, itemUlid)                       → Item | null  (lock → done; null if not locked)
-nack(fifoId, itemUlid)                      → Item | null  (lock → fail; null if not locked)
+done(fifoId, itemUlid)                      → Item | null  (lock → done; null if not locked)
+fail(fifoId, itemUlid, reason?)             → Item | null  (lock → fail; retryable; null if not locked)
+skip(fifoId, itemUlid, reason?)             → Item | null  (lock → skip; terminal; null if not locked)
 ```
 
 **Critical implementation rules** per SPEC:
 
 - All five operations are wrapped in a single `db.transaction(() => …)` (SQLite's `BEGIN IMMEDIATE`).
-- `pop`/`pull` first run the lock-reclaim from §5.3 (`UPDATE items SET status='open', locked_until=NULL WHERE fifo_id=? AND status='lock' AND locked_until < now`), **then** select oldest open item with `SELECT … ORDER BY position ASC LIMIT 1` and update it in the same tx.
+- `pop`/`pull` first run the lock-reclaim from §5.3 (`UPDATE items SET status='todo', locked_until=NULL WHERE fifo_id=? AND status='lock' AND locked_until < now`), **then** select oldest todo item with `SELECT … ORDER BY position ASC LIMIT 1` and update it in the same tx.
 - `pull` sets `locked_until = now + clamp(lockSeconds ?? FIFOS_LOCK_TIMEOUT_SECONDS, 10, 3600)`. The `?lock=<dur>` query param feeds `lockSeconds` after duration parsing (see helper below); missing/out-of-range/unparseable values are silently clamped (don't error).
 - Add `src/lib/duration.ts` with `parseDuration(s: string): number | null` — accepts bare integers (seconds), and `<n>s`, `<n>m`, `<n>h`. Returns seconds or `null` for unparseable. The handler treats `null` as "no override". Used both server-side (query param) and client-side (CLI `--lock`) so the parsing is identical.
-- `ack`/`nack` only check `status='lock'`; do **not** check `locked_until` (SPEC §2.3 stale-lock rule). They return `null` only if the row isn't `lock` anymore.
+- `done`/`fail`/`skip` only check `status='lock'`; do **not** check `locked_until` (SPEC §2.3 stale-lock rule). They return `null` only if the row isn't `lock` anymore.
 - `push` (in one tx):
   1. If `idempotencyKey` present, `SELECT item_id FROM idempotency WHERE fifo_id=? AND key=? AND created_at > now-3600`. Hit → load that item and return with `deduped: true` (skip the rest).
   2. Capacity check: `SELECT COUNT(*) FROM items WHERE fifo_id=?` ≥ `MAX_ITEMS_PER_FIFO` → run `pressurePurge(fifoId)` from §5.2 (100 oldest done, then 100 oldest fail). Re-check; if still at cap, return `null` and the handler returns 429.
@@ -133,7 +134,7 @@ Webhook routes (paths per SPEC §6.3, all `POST`):
 - `/w/:ulid/push` — read body as text, max `MAX_ITEM_BYTES`. Status `201` for fresh, `200` for deduped.
 - `/w/:ulid/pop` — `200` with item or `204`.
 - `/w/:ulid/pull[?lock=<dur>]` — `200` with item + `locked_until` or `204`. `lock` accepts `600`, `300s`, `5m`, `1h`; parsed by `parseDuration` then fed to `pull(fifoId, lockSeconds)`.
-- `/w/:ulid/ack/:id`, `/w/:ulid/nack/:id` — `200` or `404 not_locked`.
+- `/w/:ulid/done/:id`, `/w/:ulid/fail/:id`, `/w/:ulid/skip/:id` — `200` or `404 not_locked`.
 
 Webhook resolver helper: `getFifoByUlid(ulid)` → fifo + `user_id`. 404 if missing.
 
@@ -144,7 +145,7 @@ Charges (deferred — actual charging in Phase 8):
 **Done when:**
 - Push then pop returns the same body.
 - Two concurrent pulls get different items (or the second gets 204).
-- Pull → wait > 5 min → pull again on same fifo: first item is reclaimed and given again.
+- Pull → wait > 30 min → pull again on same fifo: first item is reclaimed and given again.
 - Push twice with same `Idempotency-Key` returns the same `id` and second is `200`.
 - `info` shows `4 done` after 4 pops.
 
@@ -159,14 +160,14 @@ In `src/api/handlers/webhook.ts`:
 | Route | SQL / behavior |
 |---|---|
 | `GET /w/:ulid/info` | Counts query (one grouped SELECT) + fifo row. Returns `{ name, slug, ulid, counts, total }`. |
-| `GET /w/:ulid/peek?n=5` | `SELECT … WHERE fifo_id=? AND status='open' ORDER BY position ASC LIMIT n`. Default n=10, max 100. |
-| `GET /w/:ulid/list/:status?n=5` | Same but parametric on status; `open`/`lock` ASC, `done`/`fail` DESC. |
+| `GET /w/:ulid/peek?n=5` | `SELECT … WHERE fifo_id=? AND status='todo' ORDER BY position ASC LIMIT n`. Default n=10, max 100. |
+| `GET /w/:ulid/list/:status?n=5` | Same but parametric on status; `todo`/`lock` ASC, `done`/`fail` DESC. |
 | `GET /w/:ulid/status/:id` | `SELECT id, status, position, created_at, updated_at FROM items WHERE fifo_id=? AND ulid=?`. 404 if missing. Free. |
-| `POST /w/:ulid/retry/:id` | In tx: load item by ulid; 404 if missing; 409 if status in `('open','lock')`; allocate new position via `seq`; `UPDATE items SET status='open', position=?, locked_until=NULL, updated_at=now WHERE id=?`. Charge 0.01. Emit `change` SSE event. |
+| `POST /w/:ulid/retry/:id` | In tx: load item by ulid; 404 if missing; 409 if status in `('todo','lock')`; allocate new position via `seq`; `UPDATE items SET status='todo', position=?, locked_until=NULL, updated_at=now WHERE id=?`. Charge 0.01. Emit `change` SSE event. |
 
 Content negotiation helper: read `Accept` header and `.json`/`.yaml` URL suffixes. Use `yaml` lib (already a Bun-supported dep, or add).
 
-**Done when:** all the read endpoints round-trip correctly; `retry` on a `done` item flips it back to `open` at the tail.
+**Done when:** all the read endpoints round-trip correctly; `retry` on a `done` item flips it back to `todo` at the tail.
 
 ---
 
@@ -215,7 +216,7 @@ subscribe(scope: string, lastEventId: string | null): Response  // SSE stream
 
 Hook points:
 - `queue.push()` → `publish("fifo:<id>", "push", {…})` and `publish("user:<uid>", "fifos", { fifos })`
-- `queue.pop/pull/ack/nack/retry` → `publish("fifo:<id>", "change", {…})` + user-stream update
+- `queue.pop/pull/done/fail/skip/retry` → `publish("fifo:<id>", "change", {…})` + user-stream update
 - `purger` → `publish("fifo:<id>", "purge", { deleted })` + user-stream update
 - `fifos rename / reorder / create / delete` → user-stream only
 
@@ -245,7 +246,7 @@ In `src/lib/billing.ts` (port from todos):
 
 Wire into:
 - `POST /` (Phase 3)
-- All `/w/:ulid/{push,pop,pull,ack,nack,retry}` (Phase 4 & 5) — but **skip** the charge on a deduped idempotent push.
+- All `/w/:ulid/{push,pop,pull,done,fail,skip,retry}` (Phase 4 & 5) — but **skip** the charge on a deduped idempotent push.
 
 **Done when:** in hosted mode with a linked Legendum, creating a fifo + 200 pushes settles a single ~4-credit charge. In self-hosted, no Legendum calls.
 
@@ -266,7 +267,7 @@ Order of work inside the file:
    - `push` (arg or stdin = body; `--key` → `Idempotency-Key` header)
    - `pop`, `pop --block [--timeout N]` (uses SSE — see below)
    - `pull [--lock <dur>]` → write `.fifos-lock`. `--lock` value (e.g. `600`, `5m`, `1h`) is passed through verbatim as `?lock=<dur>` on the URL — server does the parsing/clamping. CLI doesn't need to validate.
-   - `ack`, `nack` → read `.fifos-lock`, delete on success
+   - `done`, `fail`, `skip` → read `.fifos-lock`, delete on success
    - `status <id>`, `retry <id>`
    - `peek [--items=N]`, `info`, `list <status> [--items=N]` — all support `--json`/`--yaml`
    - `open` — fetch `/info`, build `${FIFOS_DOMAIN}/<slug>`, exec `open` (macOS) / `xdg-open` (linux)
@@ -281,7 +282,7 @@ Order of work inside the file:
    - Plain text by default (one item body per line for pop; pretty key:value for info).
    - `--json` and `--yaml` switch on `info`/`peek`/`list`.
 
-**Done when:** in a fresh project, `bun link` then `fifos push hello && fifos pop` round-trips. `fifos pull` writes `.fifos-lock`; `fifos ack` clears it. `fifos pop --block --timeout 10` blocks then exits 1.
+**Done when:** in a fresh project, `bun link` then `fifos push hello && fifos pop` round-trips. `fifos pull` writes `.fifos-lock`; `fifos done` clears it. `fifos pop --block --timeout 10` blocks then exits 1.
 
 ---
 
@@ -313,7 +314,7 @@ Screens:
 §10.2 in SPEC.
 
 - Header: fifo name, copy-webhook button (same affordance as todos copy-list-URL).
-- Status filter chips: `open` | `lock` | `done` | `fail`, with counts. Active = `open` by default.
+- Status filter chips: `todo` | `lock` | `done` | `fail`, with counts. Active = `todo` by default.
 - Items: fetch `GET /:slug?status=<chip>` (or content-negotiated JSON of /:slug filtered).
 - Each row: truncated body (tap to expand modal), position, status pill, age (relative time).
 - `+` button → modal with `<textarea>` → `POST /w/:ulid/push` (UI calls the public webhook URL directly, knowing the ULID from the fifo row data). This is billed at the standard 0.01 cr per push, same as any external client — no owner discount, no new route.
@@ -352,14 +353,14 @@ Use the `fifos` CLI to push/pop work items on a FIFO queue.
 ## Verbs
 - `fifos push "data"` — append an item. Use `--key <id>` for retry-safe pushes.
 - `fifos pop` — fire-and-forget consume (item → done).
-- `fifos pull [--lock 5m]` — at-least-once consume (item → lock). Then `fifos ack` on success or `fifos nack` on failure. Default lock is 5 min; extend up to 1h if your work needs longer.
+- `fifos pull [--lock 30m]` — at-least-once consume (item → lock). Then `fifos done` on success, `fifos fail` for retryable failure, or `fifos skip` for terminal rejection. Default lock is 30 min; extend up to 1h if your work needs longer.
 - `fifos status <id>` — check whether a previously-pushed item has been processed.
 - `fifos retry <id>` — resubmit a done/fail item without re-pushing.
-- `fifos info` / `fifos list <open|lock|done|fail>` — inspect the queue.
+- `fifos info` / `fifos list <todo|lock|done|fail>` — inspect the queue.
 
 ## When to use what
 - Pushing background work: `push` (with `--key` if retrying).
-- Consuming work an agent does: `pull` + `ack`/`nack` (so a crash returns the item to the queue).
+- Consuming work an agent does: `pull` + `done`/`fail`/`skip` (so a crash returns the item to the queue).
 - Just draining a queue without crash safety: `pop`.
 
 ## Exit codes
@@ -382,11 +383,11 @@ Tests in `tests/` (port the todos test harness):
 
 - `tests/auth.test.ts` — Legendum login/callback/logout; self-hosted local-user fallback.
 - `tests/fifos.test.ts` — `GET/POST/PATCH/DELETE /:slug`, `PATCH /f/reorder`, reserved-slug rejection, `MAX_FIFOS_PER_USER` enforcement, cascade-delete (items + idempotency rows go too).
-- `tests/queue.test.ts` — push/pop/pull/ack/nack atomicity; stale-lock ack succeeds; lock reclaim; lock-TTL clamp `[10, 3600]`; retry id reuse + tail position; idempotency dedup including the unique-constraint loser case.
+- `tests/queue.test.ts` — push/pop/pull/done/fail/skip atomicity; stale-lock done succeeds; lock reclaim; lock-TTL clamp `[10, 3600]`; retry id reuse + tail position; retry refuses skip; idempotency dedup including the unique-constraint loser case.
 - `tests/sse.test.ts` — `Last-Event-ID` replay; counter monotonicity; resync on stale id; resync on server restart (counter reset); 25s keep-alive frame.
 - `tests/billing.test.ts` — charge totals; deduped push is free; self-hosted is free; web-UI push (via webhook URL with session) charges normally.
-- `tests/cli.test.ts` — exit codes 0/1/2; `-f <ulid>` and `-f <url>` both work; `.fifos-lock` lifecycle (write on pull, delete on ack/nack); `--lock` durations parsed; `pop --block --timeout` exits 1 cleanly.
-- `tests/purge.test.ts` — time-based retention sweep; idempotency-row sweep (>1h); pressure purge ordering (done before fail); pressure purge does not touch `open` or `lock`.
+- `tests/cli.test.ts` — exit codes 0/1/2; `-f <ulid>` and `-f <url>` both work; `.fifos-lock` lifecycle (write on pull, delete on done/fail/skip); `--lock` durations parsed; `pop --block --timeout` exits 1 cleanly.
+- `tests/purge.test.ts` — time-based retention sweep; idempotency-row sweep (>1h); pressure purge ordering (done before fail); pressure purge does not touch `todo` or `lock`.
 
 `bun run smoke` = lint + test + build (matches todos).
 

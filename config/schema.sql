@@ -42,33 +42,38 @@ CREATE INDEX IF NOT EXISTS idx_fifos_ulid           ON fifos(ulid);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fifos_user_slug ON fifos(user_id, slug);
 
 -- Items: queue entries.
--- ulid: 26-char ULID (Crockford base32) — the public id used in ack/nack/status/retry.
--- position: assigned from fifos.seq at push time; FIFO order = position ASC among 'open'.
--- status: 'open' (queued), 'lock' (pulled, awaiting ack), 'done' (popped or acked), 'fail' (nacked).
+-- ulid: 26-char ULID (Crockford base32) — the public id used in done/fail/status/retry.
+-- position: assigned from fifos.seq at push time; FIFO order = position ASC among 'todo'.
+-- status: 'todo' (queued), 'lock' (pulled, awaiting done/fail/skip), 'done' (popped or marked done),
+--   'fail' (marked fail — retryable), 'skip' (marked skip — terminal, not retryable).
 -- data: the item body — UTF-8 text, max 64 KB (enforced at the API boundary).
 -- locked_until: unix-seconds; NULL except when status='lock'.
--- fail_reason: optional diagnostic text supplied to nack; max 1 KiB. NULL except
+-- fail_reason: optional diagnostic text supplied to fail; max 1 KiB. NULL except
 --   when status='fail' (and even then NULL is allowed if no reason was given).
 --   Cleared back to NULL on retry.
+-- skip_reason: same shape as fail_reason but for status='skip'. NULL except when
+--   status='skip' (NULL still allowed). Cleared on retry, but retry refuses 'skip'
+--   so this column never actually round-trips through retry.
 CREATE TABLE IF NOT EXISTS items (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   fifo_id      INTEGER NOT NULL REFERENCES fifos(id) ON DELETE CASCADE,
   ulid         TEXT    NOT NULL UNIQUE,
   position     INTEGER NOT NULL,
-  status       TEXT    NOT NULL CHECK (status IN ('open','lock','done','fail')),
+  status       TEXT    NOT NULL CHECK (status IN ('todo','lock','done','fail','skip')),
   data         TEXT    NOT NULL,
   locked_until INTEGER,
   fail_reason  TEXT,
+  skip_reason  TEXT,
   created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
   updated_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );
 
 -- Workhorse index — pop, pull, peek, list all order by (fifo_id, status, position).
 CREATE INDEX IF NOT EXISTS idx_items_fifo_status_pos ON items(fifo_id, status, position);
--- Lookup by item ulid (ack, nack, status, retry).
+-- Lookup by item ulid (done, fail, skip, status, retry).
 CREATE INDEX IF NOT EXISTS idx_items_fifo_ulid       ON items(fifo_id, ulid);
 -- Partial index for the retention sweep — only indexes the rows we actually delete.
-CREATE INDEX IF NOT EXISTS idx_items_purge           ON items(status, updated_at) WHERE status IN ('done','fail');
+CREATE INDEX IF NOT EXISTS idx_items_purge           ON items(status, updated_at) WHERE status IN ('done','fail','skip');
 
 -- Idempotency: dedupes POST /w/:ulid/push within a 1h window when Idempotency-Key is set.
 -- Composite PK enforces the dedup constraint at the DB level — concurrent loser pushes

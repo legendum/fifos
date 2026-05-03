@@ -2,7 +2,7 @@
  * Purgers.
  *
  * Two complementary cleanups:
- *  1. Time-based retention sweep — deletes done/fail items older than
+ *  1. Time-based retention sweep — deletes done/fail/skip items older than
  *     FIFOS_RETENTION_SECONDS, plus idempotency rows older than 1h.
  *     Runs on a setInterval started by server.ts. Emits `purge` SSE
  *     events per affected fifo and `fifos` snapshots per affected user.
@@ -28,7 +28,7 @@ export type SweepResult = {
 type DoomedRow = {
   id: number;
   fifo_id: number;
-  status: "done" | "fail";
+  status: "done" | "fail" | "skip";
   user_id: number;
 };
 
@@ -48,7 +48,7 @@ export function sweepRetention(): SweepResult {
         `SELECT i.id, i.fifo_id, i.status, f.user_id
            FROM items i
            JOIN fifos f ON f.id = i.fifo_id
-          WHERE i.status IN ('done','fail')
+          WHERE i.status IN ('done','fail','skip')
             AND i.updated_at < strftime('%s','now') - ?
           LIMIT ?`,
       )
@@ -62,12 +62,12 @@ export function sweepRetention(): SweepResult {
 
     const byFifo = new Map<
       number,
-      { user_id: number; done: number; fail: number }
+      { user_id: number; done: number; fail: number; skip: number }
     >();
     for (const r of rows) {
       let entry = byFifo.get(r.fifo_id);
       if (!entry) {
-        entry = { user_id: r.user_id, done: 0, fail: 0 };
+        entry = { user_id: r.user_id, done: 0, fail: 0, skip: 0 };
         byFifo.set(r.fifo_id, entry);
       }
       entry[r.status] += 1;
@@ -75,7 +75,7 @@ export function sweepRetention(): SweepResult {
     const affectedUsers = new Set<number>();
     for (const [fifoId, info] of byFifo) {
       publish(`fifo:${fifoId}`, "purge", {
-        deleted: { done: info.done, fail: info.fail },
+        deleted: { done: info.done, fail: info.fail, skip: info.skip },
       });
       affectedUsers.add(info.user_id);
     }
