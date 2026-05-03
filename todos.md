@@ -120,6 +120,6 @@
 - [ ] `tests/sse.test.ts` (replay, resync, keep-alive)
 - [ ] `tests/billing.test.ts`
 - [ ] `tests/cli.test.ts` (exit codes, lock lifecycle, --block timeout)
-- [ ] `tests/purge.test.ts`
+- [x] `tests/purge.test.ts` — sweep retention (aged done/fail), open/lock immunity, idempotency 1h sweep, multi-batch (>100), pressure purge ordering (done before fail) + open/lock immunity
 - [ ] `bun run smoke` green
 
