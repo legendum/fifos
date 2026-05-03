@@ -137,6 +137,41 @@ describe("queue.push idempotency", () => {
       .get(f.id) as { n: number };
     expect(n.n).toBe(1);
   });
+
+  test("concurrent pulls: two simultaneous pulls should not return the same item", async () => {
+    const f = await mkFifo("concurrent-pulls");
+    q.push(f.id, "item-1");
+    q.push(f.id, "item-2");
+
+    // In bun:test, we can use Promise.all to trigger near-simultaneous execution
+    // Since queue.ts uses transactions, one should succeed and the other should get the next item or null.
+    const [res1, res2] = await Promise.all([
+      q.pull(f.id, 60),
+      q.pull(f.id, 60),
+    ]);
+
+    expect(res1).not.toBeNull();
+    expect(res2).not.toBeNull();
+    // They must be different items
+    expect(res1!.id).not.toBe(res2!.id);
+  });
+
+  test("duration parsing: handles various formats correctly", async () => {
+    const f = await mkFifo("dur-parsing");
+    q.push(f.id, "item1");
+    q.push(f.id, "item2");
+
+    // Test min clamp
+    const pulledMin = q.pull(f.id, 1)!;
+    const beforeMin = Math.floor(Date.now() / 1000);
+    expect(pulledMin.locked_until! - beforeMin).toBeGreaterThanOrEqual(9);
+
+    // Test max clamp
+    const pulledMax = q.pull(f.id, 99999)!;
+    const beforeMax = Math.floor(Date.now() / 1000);
+    expect(pulledMax.locked_until! - beforeMax).toBeLessThanOrEqual(3601);
+  });
+
 });
 
 describe("queue.pop", () => {

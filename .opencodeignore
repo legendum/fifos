@@ -1,0 +1,44 @@
+# --- Dependencies & Build ---
+node_modules/
+dist/
+build/
+.cache/
+.parcel-cache/
+.next/
+.turbo/
+
+# --- Version Control & IDE ---
+.git/
+.svn/
+.hg/
+.vscode/
+.idea/
+*.swp
+*.log
+.DS_Store
+
+# --- Environment & Secrets ---
+# Crucial: Agents should never read your private keys or env vars
+.env*
+*.pem
+*.key
+auth.json
+secrets/
+
+# --- Testing & Coverage ---
+coverage/
+.nyc_output/
+*.lcov
+
+# --- Technical Bloat ---
+# Exclude large binary files that the LLM can't process
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.mp4
+*.pdf
+*.zip
+*.tar.gz
