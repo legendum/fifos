@@ -27,7 +27,7 @@ import {
 import { dirname, join } from "node:path";
 
 const LOCK_FILE = ".fifos-lock";
-const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{20}$/i;
 
 type Format = "text" | "json" | "yaml";
 

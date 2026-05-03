@@ -1,13 +1,13 @@
 # Fifos — v1 build
 
-**Intent:** ship the server-side core of fifos through Phase 6 of `docs/PLAN.md`, committing per phase. CLI + frontend + tests come after.
+**Intent:** ship fifos v1 through all 14 phases of `docs/PLAN.md`, committing per phase.
 
 ## Context
 
 - Plan: `docs/PLAN.md` (14 phases). Spec: `docs/SPEC.md`.
 - Template repo: `/Volumes/Code/todos` — port verbatim where the plan says so, swap `todos→fifos`, `lists→fifos`, `/t/→/f/`.
-- Original stopping point was **end of Phase 6**; we kept going and shipped Phases 7 (SSE), 8 (billing — already wired), 9 (CLI), and 13 (agent skill).
-- Remaining: Phases 10–12 (frontend home, fifo detail, PWA build) and Phase 14 (tests).
+- Done: Phases 0–9 (server-side core + CLI) and Phase 13 (agent skill).
+- Remaining: Phases 10–12 (frontend home, fifo detail, PWA build) and Phase 14 (tests). Working phase by phase.
 
 ## Constraints
 
@@ -112,10 +112,10 @@
 - [ ] SW config with cacheId from package.json version
 - [ ] `public/manifest.webmanifest` + icons (192, 512 maskable)
 
-### Phase 14 — Tests, smoke, polish (not started)
+### Phase 14 — Tests, smoke, polish (in progress)
 
 - [ ] `tests/auth.test.ts`
-- [ ] `tests/fifos.test.ts`
+- [x] `tests/fifos.test.ts` — CRUD, reserved slugs, rename + collision, reorder, MAX cap, cascade-delete
 - [ ] `tests/queue.test.ts` (atomicity, stale-lock, lock clamp, retry, idempotency loser)
 - [ ] `tests/sse.test.ts` (replay, resync, keep-alive)
 - [ ] `tests/billing.test.ts`

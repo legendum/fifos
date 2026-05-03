@@ -45,7 +45,7 @@ An item is an arbitrary UTF-8 text body with a status and a position.
 - **Body**: any text (JSON, Markdown, YAML, plain). UTF-8 only. **Max 64 KB.**
 - **Status**: `open` (queued), `lock` (pulled, awaiting ack), `done` (popped or acked), `fail` (nacked).
 - **Position**: server-assigned `INTEGER` from `seq`; monotonically increasing per fifo. FIFO order = ascending `position` among `open` items.
-- **ID**: per-item ULID (Crockford base32, 26 chars). Public — used in `ack/:id`, `nack/:id`, `retry/:id`, `status/:id`, and as the `id` field in all webhook responses and SSE events. The integer PK is server-internal and never exposed.
+- **ID**: per-item ULID (Crockford base32, 20 chars — 10-char ms timestamp + 10-char random, same scheme as todos). Public — used in `ack/:id`, `nack/:id`, `retry/:id`, `status/:id`, and as the `id` field in all webhook responses and SSE events. The integer PK is server-internal and never exposed.
 
 #### State machine
 
@@ -105,7 +105,7 @@ A lightweight, **stateless** CLI. No local file, no merge logic — every comman
 
 **Command parsing**: `push`, `pop`, `pull`, `ack`, `nack`, `status`, `retry`, `peek`, `info`, `list`, `open`, `skill`, `help` are exact-match keywords. Unknown subcommands are an error (we don't have the "anything else is a new item" affordance because `push` already takes data).
 
-**Global flag — `-f` / `--fifo <ulid|url>`** — recognized by every command. Overrides `FIFOS_WEBHOOK`. Accepts a bare 26-char ULID (CLI prepends `${FIFOS_DOMAIN:-https://fifos.in}/w/`) or a full URL (used verbatim — supports self-hosted domains and dev `http://localhost:3000`). Resolution order: `-f` flag → `FIFOS_WEBHOOK` env → first-run TTY prompt (saves to `.env`) → error.
+**Global flag — `-f` / `--fifo <ulid|url>`** — recognized by every command. Overrides `FIFOS_WEBHOOK`. Accepts a bare 20-char ULID (CLI prepends `${FIFOS_DOMAIN:-https://fifos.in}/w/`) or a full URL (used verbatim — supports self-hosted domains and dev `http://localhost:3000`). Resolution order: `-f` flag → `FIFOS_WEBHOOK` env → first-run TTY prompt (saves to `.env`) → error.
 
 Multi-fifo services keep their own per-purpose env vars and pass the right one:
 
@@ -308,7 +308,7 @@ Then proceed with the actual pop/pull select. Lazy, no cron, no races.
 
 All under `/w/:ulid/`. The ULID is the only credential. CORS open to `*`.
 
-In every response below, the `id` field is the **item ULID** (26 chars), not the integer PK. Same value used in `ack/:id`, `nack/:id`, `retry/:id`, `status/:id` paths.
+In every response below, the `id` field is the **item ULID** (20 chars), not the integer PK. Same value used in `ack/:id`, `nack/:id`, `retry/:id`, `status/:id` paths.
 
 | Verb & path | Body / Headers | Returns | Cost |
 |---|---|---|---|
@@ -405,7 +405,7 @@ Self-hosted mode (no `LEGENDUM_API_KEY`) disables billing entirely. Limits in §
 ## 8. Security / privacy
 
 - **Auth cookie**: HMAC-SHA256, 30-day expiry. Client cannot forge.
-- **Webhook ULIDs**: unguessable (Crockford base32, 26 chars). Single-fifo scope.
+- **Webhook ULIDs**: unguessable (Crockford base32, 20 chars). Single-fifo scope.
 - **CORS**: open to `*` on webhook routes.
 - **HTTPS only** in production.
 - **Item bodies are not scanned** — UTF-8 text passed through verbatim.
