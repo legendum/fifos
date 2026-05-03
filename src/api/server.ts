@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { setAuthCookieHeader } from "../lib/auth.js";
 import { closeTabs } from "../lib/billing.js";
 import { FIFOS_PURGE_INTERVAL_SECONDS, PORT } from "../lib/constants.js";
@@ -10,6 +11,74 @@ import * as fifosHandlers from "./handlers/fifos.js";
 import * as settingsHandlers from "./handlers/settings.js";
 import * as webhookHandlers from "./handlers/webhook.js";
 import { json } from "./json.js";
+
+const root = resolve(import.meta.dir, "../..");
+
+/** Find the content-hashed JS bundle from `public/dist`, cached after first hit. */
+let bundleFile: string | null = null;
+async function getBundleFilename(): Promise<string | null> {
+  if (bundleFile) return bundleFile;
+  try {
+    const glob = new Bun.Glob("entry-*.js");
+    for await (const f of glob.scan(join(root, "public/dist"))) {
+      bundleFile = f;
+      return f;
+    }
+  } catch {
+    /* no dist yet */
+  }
+  return null;
+}
+
+/** Send a static file with the given content-type. 404 if missing. */
+async function serveStatic(
+  filePath: string,
+  contentType: string,
+  cacheControl?: string,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) {
+    return new Response("Not found", { status: 404 });
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    ...(cacheControl ? { "Cache-Control": cacheControl } : {}),
+    ...(extraHeaders ?? {}),
+  };
+  return new Response(file, { headers });
+}
+
+async function serveIndex(): Promise<Response> {
+  const bundle = await getBundleFilename();
+  const scriptTag = bundle
+    ? `<script type="module" src="/dist/${bundle}"></script>`
+    : "";
+  const html = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Fifos</title>
+    <link rel="icon" type="image/png" sizes="192x192" href="/fifos-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/fifos-512.png" />
+    <link rel="apple-touch-icon" href="/fifos-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="/main.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    ${scriptTag}
+  </body>
+</html>`;
+  return new Response(html, { headers: { "Content-Type": "text/html" } });
+}
+
+function wantsHtml(req: Request): boolean {
+  const accept = req.headers.get("Accept") ?? "";
+  return accept.includes("text/html");
+}
 
 // @ts-expect-error — pure JS SDK
 const legendumSdk = require("../lib/legendum.js");
@@ -140,6 +209,44 @@ export default {
       return new Response(null, { status: 204, headers: webhookCorsHeaders });
     }
 
+    // --- Static frontend assets (no auth, no user resolution). ---
+    if (method === "GET") {
+      if (path === "/main.css") {
+        return serveStatic(join(root, "src/web/main.css"), "text/css");
+      }
+      if (path === "/manifest.json") {
+        return serveStatic(
+          join(root, "src/web/manifest.json"),
+          "application/manifest+json",
+        );
+      }
+      if (path === "/fifos.png") {
+        return serveStatic(join(root, "public/fifos.png"), "image/png");
+      }
+      if (path === "/fifos-192.png") {
+        return serveStatic(join(root, "public/fifos-192.png"), "image/png");
+      }
+      if (path === "/fifos-512.png") {
+        return serveStatic(join(root, "public/fifos-512.png"), "image/png");
+      }
+      if (path === "/dist/sw.js") {
+        return serveStatic(
+          join(root, "public/dist/sw.js"),
+          "application/javascript",
+          "no-cache",
+          { "Service-Worker-Allowed": "/" },
+        );
+      }
+      if (path.startsWith("/dist/")) {
+        const safe = path.replace(/\.\./g, "");
+        return serveStatic(
+          join(root, "public", safe),
+          "application/javascript",
+          "public, max-age=31536000, immutable",
+        );
+      }
+    }
+
     // --- Public webhook routes (no auth — ULID is the credential). ---
     // Handled BEFORE user resolution because hosted mode would otherwise 401.
     if (path.startsWith("/w/")) {
@@ -221,6 +328,7 @@ export default {
 
     // --- Fifos CRUD (auth) ---
     if (path === "/" && method === "GET") {
+      if (wantsHtml(req)) return await serveIndex();
       return fifosHandlers.indexFifos(userId);
     }
     if (path === "/" && method === "POST") {
@@ -242,8 +350,9 @@ export default {
       const rawSlug = slugMatch[1];
       if (method === "GET") {
         const result = fifosHandlers.getFifo(req, rawSlug, userId);
-        if (result === null)
-          return json({ error: "not_found", reason: "route" }, 404);
+        // null = handler chose HTML format → serve the SPA shell; the client
+        // router renders the fifo detail screen.
+        if (result === null) return await serveIndex();
         return result;
       }
       if (method === "PATCH") {

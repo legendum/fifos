@@ -90,27 +90,28 @@
 - [x] `config/SKILL.md` written
 - [x] `fifos skill` copies it to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`
 
-### Phase 10 — Frontend home (not started)
+### Phase 10 — Frontend home
 
-- [ ] Port `src/web/{App.tsx, entry.tsx, components/}` from todos; strip undo/redo + item-level UI
-- [ ] Login screen (Legendum redirect)
-- [ ] Fifos home: list from `GET /`, drag-reorder via `@dnd-kit` → `PATCH /f/reorder`, `+` create, swipe-left delete
-- [ ] Subscribe to `GET /f/fifos/items` for live updates
-- [ ] Settings: log out, Legendum link/unlink
+- [x] Port `src/web/{App.tsx, entry.tsx, components/}` from todos; strip undo/redo + item-level UI + offlineDb / syncMarkdown
+- [x] Login screen (Legendum redirect)
+- [x] Fifos home: list from `GET /`, drag-reorder via `@dnd-kit` → `PATCH /f/reorder`, `+` create, swipe-left delete + edit
+- [x] Subscribe to `GET /f/fifos/items` for live updates
+- [x] Server SPA shell + static asset routes (`/main.css`, `/manifest.json`, `/fifos-*.png`, `/dist/*`)
+- [ ] Settings: log out, Legendum link/unlink (Legendum widget already in TopBar; no settings screen yet — same as todos)
 
-### Phase 11 — Frontend fifo detail (not started)
+### Phase 11 — Frontend fifo detail
 
-- [ ] Header with copy-webhook button
-- [ ] Status filter chips (open/lock/done/fail) with counts
-- [ ] Items list (truncated body, position, status pill, age)
-- [ ] `+` modal posts to `/w/:ulid/push`
-- [ ] Subscribe to `GET /w/:ulid/items`
+- [x] Header with back arrow, fifo name (rename), copy-webhook button (`/w/<ulid>` + CopyIcon → CheckIcon flash)
+- [x] Status filter chips (open/lock/done/fail) with counts
+- [x] Items list (truncated body, position, status pill, age, tap → expand modal)
+- [x] `+` modal posts to `/w/:ulid/push` (textarea, Cmd/Ctrl+Enter to submit)
+- [x] Subscribe to `GET /w/:ulid/items` for live push/change/purge/resync
 
-### Phase 12 — PWA & service worker (not started)
+### Phase 12 — PWA & service worker
 
-- [ ] `scripts/build.ts` (Bun.build + workbox-build generateSW)
-- [ ] SW config with cacheId from package.json version
-- [ ] `public/manifest.webmanifest` + icons (192, 512 maskable)
+- [x] `scripts/build.ts` (Bun.build → entry-[hash].js + workbox-build generateSW)
+- [x] SW config with cacheId from package.json version, skipWaiting + clientsClaim + cleanupOutdatedCaches
+- [x] `src/web/manifest.json` + icons (192 any, 512 any maskable)
 
 ### Phase 14 — Tests, smoke, polish (in progress)
 
