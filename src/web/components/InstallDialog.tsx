@@ -85,14 +85,14 @@ export default function InstallDialog({ onClose }: Props) {
           <section className="dialog-section">
             <h3>3. Use it</h3>
             <pre className="dialog-code">
-              {`fifos push '{"build":42}'   # append work
-fifos pop                    # consume oldest (fire-and-forget)
-fifos pull                   # at-least-once (writes .fifos-lock)
-fifos ack                    # mark current as done
-fifos nack                   # mark current as fail
-fifos info                   # show counts
-fifos list open              # show open items
-fifos open                   # open in browser`}
+              {`fifos push '{"build":42}' # append work
+fifos pop                 # consume oldest (fire-and-forget)
+fifos pull                # at-least-once (writes .fifos-lock)
+fifos ack                 # mark current as done
+fifos nack                # mark current as fail
+fifos info                # show counts
+fifos list open           # show open items
+fifos open                # open in browser`}
             </pre>
           </section>
 

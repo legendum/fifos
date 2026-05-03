@@ -164,13 +164,8 @@ export default function FifoDetail({
   return (
     <div className="screen">
       <div className="fifo-detail-header">
-        <button
-          type="button"
-          className="back-btn"
-          onClick={onBack}
-          aria-label="Back to fifos"
-        >
-          ‹
+        <button className="back-btn" onClick={onBack}>
+          ◀ Back
         </button>
         <div className="fifo-detail-titles">
           <button
