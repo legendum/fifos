@@ -79,7 +79,7 @@
 
 - [x] `src/cli/main.ts` — single-file argv parser, no commander/yargs
 - [x] Webhook URL resolution: `-f <ulid|url>` → `FIFOS_WEBHOOK` from `.env` → first-run TTY prompt → exit 2
-- [x] Bare ULID canonicalized to `${FIFOS_DOMAIN:-https://fifos.in}/w/<ulid>`
+- [x] Bare ULID canonicalized to `${FIFOS_DOMAIN:-https://fifos.dev}/w/<ulid>`
 - [x] Verbs: `push` (arg/stdin/`--key`), `pop`, `pop --block [--timeout]`, `pull [--lock]`, `ack`, `nack`, `status <id>`, `retry <id>`, `peek`, `info`, `list <status>`, `open`, `skill`, `help` (default = `info`)
 - [x] `--json` / `--yaml` on `info`/`peek`/`list`/`status`
 - [x] `.fifos-lock` written on `pull`, deleted on `ack`/`nack` (and on stale-lock 404)

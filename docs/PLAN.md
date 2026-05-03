@@ -259,7 +259,7 @@ File: `src/cli/main.ts`. Single-file argv parser (no commander/yargs — todos d
 
 Order of work inside the file:
 
-1. **Bootstrap & config**: load `.env`; resolve webhook URL via `-f <ulid|url>` → `FIFOS_WEBHOOK` → first-run TTY prompt. Implement the URL canonicalization (bare ULID → `${FIFOS_DOMAIN:-https://fifos.in}/w/<ulid>`). Default subcommand (`fifos` with no args) is `info` — but on first run, when no webhook is resolved, prompt the user, save to `.env`, then run `info`. Non-TTY (no stdin attached): exit 2 with the "FIFOS_WEBHOOK not set" message instead of prompting.
+1. **Bootstrap & config**: load `.env`; resolve webhook URL via `-f <ulid|url>` → `FIFOS_WEBHOOK` → first-run TTY prompt. Implement the URL canonicalization (bare ULID → `${FIFOS_DOMAIN:-https://fifos.dev}/w/<ulid>`). Default subcommand (`fifos` with no args) is `info` — but on first run, when no webhook is resolved, prompt the user, save to `.env`, then run `info`. Non-TTY (no stdin attached): exit 2 with the "FIFOS_WEBHOOK not set" message instead of prompting.
 2. **HTTP helper**: `request(method, path, { body?, headers? })` returning `{ status, body, headers }`. Maps 4xx/5xx/network → exit code 2 with stderr message.
 3. **Subcommand dispatch** — exact-match keywords. Default = `info`.
 4. **Commands** (one function each):

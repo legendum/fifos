@@ -103,7 +103,7 @@ function readLineSync(): string {
 function canonicalize(input: string): string {
   const s = input.trim();
   if (ULID_RE.test(s)) {
-    const domain = process.env.FIFOS_DOMAIN || "https://fifos.in";
+    const domain = process.env.FIFOS_DOMAIN || "https://fifos.dev";
     return `${domain}/w/${s.toUpperCase()}`;
   }
   return s.replace(/\/$/, "");

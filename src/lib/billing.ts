@@ -13,7 +13,7 @@ const tabs = new Map<string, any>();
 
 function getTab(token: string): any {
   if (!tabs.has(token)) {
-    const t = legendum.tab(token, "fifos.in writes", { threshold: 2 });
+    const t = legendum.tab(token, "fifos.dev writes", { threshold: 2 });
     tabs.set(token, t);
   }
   return tabs.get(token);
@@ -45,7 +45,7 @@ export async function chargeFifoCreate(
   }
 
   try {
-    await legendum.charge(token, 2, "fifos.in fifo");
+    await legendum.charge(token, 2, "fifos.dev fifo");
     return null;
   } catch (err: any) {
     if (err.code === "insufficient_funds") {

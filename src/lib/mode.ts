@@ -4,7 +4,7 @@
  * Self-hosted is the default for FOSS users: API auth uses a single local
  * user, billing is skipped, and limits in SPEC §3.2 still apply.
  *
- * Hosted mode (fifos.in) is enabled automatically when `LEGENDUM_API_KEY`
+ * Hosted mode (fifos.dev) is enabled automatically when `LEGENDUM_API_KEY`
  * is set — Legendum-backed login + billing + auto-logout on unlink.
  */
 

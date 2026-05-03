@@ -41,7 +41,7 @@ export function getUserIdFromRequest(req: Request): number | null {
 
 export function getDomain(): string {
   if (isByLegendum()) {
-    return process.env.FIFOS_DOMAIN || "https://fifos.in";
+    return process.env.FIFOS_DOMAIN || "https://fifos.dev";
   }
   return process.env.FIFOS_DOMAIN || `http://localhost:${PORT}`;
 }

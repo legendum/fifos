@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import CopyIcon from "./CopyIcon";
 
-const INSTALL_CMD = "curl -fsSL https://fifos.in/install.sh | sh";
+const INSTALL_CMD = "curl -fsSL https://fifos.dev/install.sh | sh";
 const COPY_ACK_MS = 850;
 
 type Props = {
@@ -78,7 +78,7 @@ export default function InstallDialog({ onClose }: Props) {
               copy it). Add it to your project's <code>.env</code>:
             </p>
             <pre className="dialog-code">
-              FIFOS_WEBHOOK=https://fifos.in/w/01ABC123DEF456GHI789
+              FIFOS_WEBHOOK=https://fifos.dev/w/01ABC123DEF456GHI789
             </pre>
           </section>
 

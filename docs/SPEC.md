@@ -1,6 +1,6 @@
 # Fifos — Product Spec
 
-A minimal PWA + CLI: **create FIFO queues → push/pop items via web UI, CLI, or webhook**. Hosted at **fifos.in**. Designed for both human and agent users.
+A minimal PWA + CLI: **create FIFO queues → push/pop items via web UI, CLI, or webhook**. Hosted at **fifos.dev**. Designed for both human and agent users.
 
 Items move through four states: `open` → `lock` → `done` / `fail`. Done and fail are kept for audit and purged on a schedule.
 
@@ -34,8 +34,8 @@ No passwords. The user's **email** is the stable identity.
 ### 2.2 Fifos (queues)
 
 1. **Dashboard** (after login): list of fifos. "Create fifo" → user enters a name → server generates a unique ULID for the webhook URL.
-2. **Web URL**: `fifos.in/<slug>` — authenticated, session-based. Slug is unique per user. Reserved names: `f`, `w` (rejected on create).
-3. **Webhook URL**: `fifos.in/w/<ulid>` — public, no auth. For agents and scripts.
+2. **Web URL**: `fifos.dev/<slug>` — authenticated, session-based. Slug is unique per user. Reserved names: `f`, `w` (rejected on create).
+3. **Webhook URL**: `fifos.dev/w/<ulid>` — public, no auth. For agents and scripts.
 4. **Each fifo** contains an ordered set of items.
 
 ### 2.3 Items
@@ -99,13 +99,13 @@ A lightweight, **stateless** CLI. No local file, no merge logic — every comman
 | `fifos list lock` | List currently-locked items, oldest first, with `locked_until`. |
 | `fifos list done --items=5` | List up to N done items, **newest first**. |
 | `fifos list fail --items=5` | List up to N fail items, **newest first**. |
-| `fifos open` | Open `fifos.in/<slug>` in default browser. |
+| `fifos open` | Open `fifos.dev/<slug>` in default browser. |
 | `fifos skill` | Install agent skill to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`. |
 | `fifos help` / `--help` | Show commands. |
 
 **Command parsing**: `push`, `pop`, `pull`, `ack`, `nack`, `status`, `retry`, `peek`, `info`, `list`, `open`, `skill`, `help` are exact-match keywords. Unknown subcommands are an error (we don't have the "anything else is a new item" affordance because `push` already takes data).
 
-**Global flag — `-f` / `--fifo <ulid|url>`** — recognized by every command. Overrides `FIFOS_WEBHOOK`. Accepts a bare 20-char ULID (CLI prepends `${FIFOS_DOMAIN:-https://fifos.in}/w/`) or a full URL (used verbatim — supports self-hosted domains and dev `http://localhost:3000`). Resolution order: `-f` flag → `FIFOS_WEBHOOK` env → first-run TTY prompt (saves to `.env`) → error.
+**Global flag — `-f` / `--fifo <ulid|url>`** — recognized by every command. Overrides `FIFOS_WEBHOOK`. Accepts a bare 20-char ULID (CLI prepends `${FIFOS_DOMAIN:-https://fifos.dev}/w/`) or a full URL (used verbatim — supports self-hosted domains and dev `http://localhost:3000`). Resolution order: `-f` flag → `FIFOS_WEBHOOK` env → first-run TTY prompt (saves to `.env`) → error.
 
 Multi-fifo services keep their own per-purpose env vars and pass the right one:
 
@@ -179,7 +179,7 @@ The `idx_items_fifo_status_pos` index is the workhorse — pop, pull, peek, list
 
 ## 4. Tech stack & project structure
 
-Same stack as todos: **Bun for everything**, **TypeScript**, **Bun.serve**, **bun:sqlite**, **React 18 + custom CSS** frontend, **workbox-build** for the PWA, **Biome** for lint. Domain: **fifos.in**.
+Same stack as todos: **Bun for everything**, **TypeScript**, **Bun.serve**, **bun:sqlite**, **React 18 + custom CSS** frontend, **workbox-build** for the PWA, **Biome** for lint. Domain: **fifos.dev**.
 
 ### Project structure
 
@@ -418,7 +418,7 @@ Self-hosted mode (no `LEGENDUM_API_KEY`) disables billing entirely. Limits in §
 |---|---|---|
 | `PORT` | `3000` | Listen port |
 | `HOST` | `0.0.0.0` | Bind host |
-| `FIFOS_DOMAIN` | `http://localhost:$PORT` (dev) / `https://fifos.in` (prod) | Public domain |
+| `FIFOS_DOMAIN` | `http://localhost:$PORT` (dev) / `https://fifos.dev` (prod) | Public domain |
 | `FIFOS_DB_PATH` | `data/fifos.db` | SQLite path |
 | `FIFOS_COOKIE_SECRET` | — | Required in hosted mode |
 | `FIFOS_LOCK_TIMEOUT_SECONDS` | `300` | Default lock TTL on `pull` (5 min — agent-friendly) |
@@ -435,7 +435,7 @@ Self-hosted mode (no `LEGENDUM_API_KEY`) disables billing entirely. Limits in §
 
 | Variable | Purpose |
 |---|---|
-| `FIFOS_WEBHOOK` | Webhook URL (`https://fifos.in/w/<ulid>`) |
+| `FIFOS_WEBHOOK` | Webhook URL (`https://fifos.dev/w/<ulid>`) |
 
 ---
 

@@ -4,7 +4,7 @@ export const HOST = String(process.env.HOST || "0.0.0.0");
 export const FIFOS_DOMAIN =
   process.env.FIFOS_DOMAIN ||
   (process.env.LEGENDUM_API_KEY
-    ? "https://fifos.in"
+    ? "https://fifos.dev"
     : `http://localhost:${PORT}`);
 
 /** Default lock TTL on `pull`, in seconds. Server clamps the override to [10, 3600]. */
@@ -35,7 +35,7 @@ export const MAX_FIFOS_PER_USER = Number(
   process.env.FIFOS_MAX_FIFOS_PER_USER || 50,
 );
 
-/** Slugs reserved at the URL level (`fifos.in/<slug>`). */
+/** Slugs reserved at the URL level (`fifos.dev/<slug>`). */
 export const RESERVED_SLUGS = new Set(["f", "w", "auth"]);
 
 /** Idempotency-Key dedupe window for `POST /w/:ulid/push`. */
