@@ -31,6 +31,7 @@ export type ItemRow = {
   updated_at: number;
   status: ItemStatus;
   locked_until: number | null;
+  fail_reason: string | null;
 };
 
 export type PushResult = {
@@ -120,7 +121,7 @@ function loadItemById(id: number): ItemRow | null {
   const db = getDb();
   const row = db
     .query(
-      `SELECT ulid AS id, position, data, created_at, updated_at, status, locked_until
+      `SELECT ulid AS id, position, data, created_at, updated_at, status, locked_until, fail_reason
          FROM items WHERE id = ?`,
     )
     .get(id) as ItemRow | undefined;
@@ -289,18 +290,28 @@ export function pull(
 
 /** Mark a locked item done. Returns null if it's not in 'lock' anymore. */
 export function ack(fifoId: number, itemUlid: string): ItemRow | null {
-  return finishLocked(fifoId, itemUlid, "done");
+  return finishLocked(fifoId, itemUlid, "done", null);
 }
 
-/** Mark a locked item failed. Returns null if it's not in 'lock' anymore. */
-export function nack(fifoId: number, itemUlid: string): ItemRow | null {
-  return finishLocked(fifoId, itemUlid, "fail");
+/**
+ * Mark a locked item failed. Returns null if it's not in 'lock' anymore.
+ *
+ * `reason` is optional diagnostic text shown in the web GUI and read paths;
+ * caller is responsible for length-capping (the API boundary enforces 1 KiB).
+ */
+export function nack(
+  fifoId: number,
+  itemUlid: string,
+  reason?: string | null,
+): ItemRow | null {
+  return finishLocked(fifoId, itemUlid, "fail", reason ?? null);
 }
 
 function finishLocked(
   fifoId: number,
   itemUlid: string,
   next: "done" | "fail",
+  failReason: string | null,
 ): ItemRow | null {
   const db = getDb();
   return db.transaction(() => {
@@ -311,10 +322,11 @@ function finishLocked(
     if (row.status !== "lock") return null;
     db.run(
       `UPDATE items
-          SET status = ?, locked_until = NULL,
+          SET status = ?, locked_until = NULL, fail_reason = ?,
               updated_at = strftime('%s','now')
         WHERE id = ?`,
       next,
+      next === "fail" ? failReason : null,
       row.id,
     );
     return loadItemById(row.id);
@@ -348,7 +360,7 @@ export function retry(
     db.run(
       `UPDATE items
           SET status = 'open', position = ?, locked_until = NULL,
-              updated_at = strftime('%s','now')
+              fail_reason = NULL, updated_at = strftime('%s','now')
         WHERE id = ?`,
       seqRow.seq,
       row.id,

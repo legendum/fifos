@@ -97,7 +97,7 @@
 - [x] Fifos home: list from `GET /`, drag-reorder via `@dnd-kit` → `PATCH /f/reorder`, `+` create, swipe-left delete + edit
 - [x] Subscribe to `GET /f/fifos/items` for live updates
 - [x] Server SPA shell + static asset routes (`/main.css`, `/manifest.json`, `/fifos-*.png`, `/dist/*`)
-- [ ] Settings: log out, Legendum link/unlink (Legendum widget already in TopBar; no settings screen yet — same as todos)
+- (no settings screen — Legendum widget in TopBar handles link/unlink, same as todos)
 
 ### Phase 11 — Frontend fifo detail
 
@@ -113,14 +113,23 @@
 - [x] SW config with cacheId from package.json version, skipWaiting + clientsClaim + cleanupOutdatedCaches
 - [x] `src/web/manifest.json` + icons (192 any, 512 any maskable)
 
-### Phase 14 — Tests, smoke, polish (in progress)
+### Phase 14 — Tests, smoke, polish
 
-- [ ] `tests/auth.test.ts`
+- [x] `tests/auth.test.ts` — HMAC verify, expiry, malformed, requireAuth/requireAuthAsync, Bearer token, ghost-user
 - [x] `tests/fifos.test.ts` — CRUD, reserved slugs, rename + collision, reorder, MAX cap, cascade-delete
 - [x] `tests/queue.test.ts` — push/pop/pull/ack/nack atomicity, idempotency, stale-lock, lazy reclaim, lock TTL clamp, retry, capacity + pressure-purge
-- [ ] `tests/sse.test.ts` (replay, resync, keep-alive)
-- [ ] `tests/billing.test.ts`
-- [ ] `tests/cli.test.ts` (exit codes, lock lifecycle, --block timeout)
+- [x] `tests/sse.test.ts` — live publish, initial event, replay from Last-Event-ID, stale/future id → resync, user coalescing, per-fifo uncoalesced, AbortSignal close
+- [x] `tests/billing.test.ts` — chargeFifoCreate (2 cr) + token errors + token clear, tab threshold/flush/sub-credit close, self-hosted skip, dedupe-free
+- [x] `tests/cli.test.ts` — exit codes 0/1/2, push/pop/pull/ack/nack, .fifos-lock lifecycle, --block --timeout
 - [x] `tests/purge.test.ts` — sweep retention (aged done/fail), open/lock immunity, idempotency 1h sweep, multi-batch (>100), pressure purge ordering (done before fail) + open/lock immunity
-- [ ] `bun run smoke` green
+- [x] `bun run smoke` green
+
+## Post-v1
+
+### Nack reason
+
+- [x] `items.fail_reason TEXT` (1 KiB cap, NULL except on `fail`, cleared on retry)
+- [x] `nack` accepts optional `text/plain` body — CLI: `fifos nack [reason...]` or stdin
+- [x] Web fifo-detail renders reason inline on `fail` rows + in the expand modal
+- [x] SPEC §3.1 + §5 updated; tests in queue/cli/fifos
 

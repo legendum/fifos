@@ -90,7 +90,7 @@ A lightweight, **stateless** CLI. No local file, no merge logic — every comman
 | `fifos pop --block [--timeout 60]` | Open SSE on `/items`; wait for a `push` event; then pop. Reconnects on drop using `Last-Event-ID`. `--timeout` (seconds) bounds the wait — on timeout exits 1, no output. Default: no timeout. |
 | `fifos pull [--lock <dur>]` | Atomically mark oldest `open` as `lock`. Stores `id` in `.fifos-lock` (per-cwd, gitignored). `--lock` accepts bare seconds (`600`), or `300s` / `5m` / `1h`. Clamped server-side to `[10s, 1h]`. |
 | `fifos ack` | POST `/ack/:id` using the id from `.fifos-lock`. Removes the lock file on success. |
-| `fifos nack` | POST `/nack/:id` using the id from `.fifos-lock`. Removes the lock file on success. |
+| `fifos nack [reason words...]` | POST `/nack/:id` using the id from `.fifos-lock`. Optional positional reason (or stdin) is sent as `text/plain` body, max 1 KiB. Removes the lock file on success. |
 | `fifos status <id>` | Print one item's state. Output: `{ id, status, position, created_at, updated_at }`. Exit 1 if id unknown. |
 | `fifos retry <id>` | Move a `done` or `fail` item back to `open` at the tail of the fifo. Same id retained. Exit 1 if id unknown or already `open`/`lock`. |
 | `fifos peek --items=5` | GET `/peek?n=5`. Default n=10. Pretty-printed list. |
@@ -155,7 +155,7 @@ A skill file (`config/SKILL.md`) installed by `fifos skill` to `~/.claude/skills
 
 - **users**: `id` (PK), `email` (UNIQUE NOT NULL), `legendum_token`, `created_at`. Identical to todos.
 - **fifos**: `id` (PK), `user_id` (FK), `ulid` (UNIQUE), `name`, `slug`, `position` (INTEGER, user-defined ordering; new fifos get `MAX(position)+1`), `seq` (INTEGER, last-issued item position; starts at 0), `created_at`, `updated_at`. Listed by `position` ASC, then `id` ASC.
-- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public id for ack/nack/status/retry), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `open` | `lock` | `done` | `fail`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `created_at`, `updated_at`.
+- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public id for ack/nack/status/retry), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `open` | `lock` | `done` | `fail`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `fail_reason` (TEXT, optional diagnostic supplied to nack; NULL except when status=`fail`, and even then NULL is allowed; cleared on retry), `created_at`, `updated_at`.
 - **idempotency**: `fifo_id` (FK), `key` (TEXT), `item_id` (FK → items.id), `created_at`. **PRIMARY KEY (fifo_id, key)**. Used to dedupe `POST /push` with `Idempotency-Key`. Rows older than 1h are swept by the same purger as done/fail items.
 
 Indexes:
@@ -316,12 +316,12 @@ In every response below, the `id` field is the **item ULID** (20 chars), not the
 | `POST /w/:ulid/pop` | — | `200 { id, data, position, created_at }` (status now `done`) or `204` if empty | **0.01** |
 | `POST /w/:ulid/pull[?lock=<dur>]` | — | `200 { id, data, position, created_at, locked_until }` (status now `lock`) or `204` if empty. `lock` accepts seconds (`600`), or `300s`/`5m`/`1h`. Clamped to `[10s, 1h]`. | **0.01** |
 | `POST /w/:ulid/ack/:id` | — | `200 { id, status: "done" }`. `404 { error: "not_locked" }` if id not currently `lock`. | **0.01** |
-| `POST /w/:ulid/nack/:id` | — | `200 { id, status: "fail" }`. `404` if id not currently `lock`. | **0.01** |
+| `POST /w/:ulid/nack/:id` | optional `text/plain` body = failure reason (max 1 KiB; whitespace-only treated as no reason). | `200 { id, status: "fail", fail_reason }`. `400 invalid_request` if body exceeds 1 KiB. `404` if id not currently `lock`. | **0.01** |
 | `POST /w/:ulid/retry/:id` | — | `200 { id, status: "open", position }` — moves a `done`/`fail` item back to `open` at the tail (new position from `seq`, same id). `404` if id unknown; `409 { error: "wrong_status" }` if currently `open` or `lock`. | **0.01** |
-| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, created_at, updated_at }`. `404` if id unknown. | free |
+| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, fail_reason, created_at, updated_at }`. `fail_reason` is null unless status=`fail`. `404` if id unknown. | free |
 | `GET /w/:ulid/peek?n=5` | — | `200 { items: [...] }` — up to N oldest `open` items, no status change. Default n=10, max 100. | free |
 | `GET /w/:ulid/info` | — | `200 { name, slug, ulid, counts: {...}, total }` | free |
-| `GET /w/:ulid/list/:status?n=5` | — | `200 { items: [...] }`. `open`/`lock`: oldest first. `done`/`fail`: newest first. Default n=10, max 100. | free |
+| `GET /w/:ulid/list/:status?n=5[&reason=<substr>]` | — | `200 { items: [...] }`. `open`/`lock`: oldest first. `done`/`fail`: newest first. Default n=10, max 100. `reason` is a case-insensitive substring filter against `fail_reason`; only honored when status=`fail`, ignored otherwise. SQL `%`/`_`/`\\` in the substring are matched literally. | free |
 | `GET /w/:ulid/items` | — | SSE stream (see §6.5) | free |
 
 Shared responses: **404** if ULID unknown (`{ error: "not_found", reason: "ulid" }`); **402** if no Legendum account linked; **429** if Legendum charge fails or fifo at capacity (`reason: fifo_full`).
@@ -445,7 +445,7 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 
 ### 10.1 Fifos screen (home)
 
-- **Top bar**: logo (left, click → install/CLI instructions), settings (right).
+- **Top bar**: logo (left, click → install/CLI instructions), Legendum link/unlink widget (right).
 - **Body**: list of fifos, ordered by `position` (drag to reorder). Each row shows name + counts pill (`3·1·12·0` for open/lock/done/fail).
 - **"+"** to create.
 - **Swipe left** reveals **Delete**.
@@ -461,11 +461,6 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 - **"+"** to push (textarea modal — multi-line OK).
 - No drag, no inline edit, no delete from UI in v1 (queue is queue).
 - **Live updates** via `/w/:ulid/items` SSE.
-
-### 10.3 Settings
-
-- Log out.
-- Legendum link/unlink (auto-logout on unlink).
 
 ---
 

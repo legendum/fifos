@@ -295,14 +295,12 @@ Screens:
 
 1. **Login** — same as todos (Legendum redirect).
 2. **Fifos home** (§10.1):
-   - Top bar: logo (click → install dialog with CLI install instructions), Settings icon.
+   - Top bar: logo (click → install dialog with CLI install instructions), Legendum link/unlink widget.
    - List of fifos from `GET /`, ordered by position. Subscribe to `GET /f/fifos/items` for live updates.
    - Drag-and-drop with `@dnd-kit` (port the todos pattern). On drag-end, `PATCH /f/reorder` with the new slug order.
    - `+` button → name prompt → `POST /`.
    - Swipe-left → Delete (`DELETE /:slug`).
    - Tap a row → fifo detail.
-
-3. **Settings**: log out, Legendum link/unlink widget.
 
 **Done when:** can log in, create 3 fifos, drag-reorder them, delete one.
 

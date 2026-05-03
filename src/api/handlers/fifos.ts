@@ -229,7 +229,7 @@ export function getFifo(
   const newestFirst = statusParam === "done" || statusParam === "fail";
   const items = db
     .query(
-      `SELECT ulid AS id, position, status, data, locked_until, created_at, updated_at
+      `SELECT ulid AS id, position, status, data, locked_until, fail_reason, created_at, updated_at
          FROM items
         WHERE fifo_id = ? AND status = ?
         ORDER BY position ${newestFirst ? "DESC" : "ASC"}`,

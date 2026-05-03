@@ -4,7 +4,7 @@
  * fifos — stateless CLI. Every subcommand is a single webhook call.
  *
  * Resolution order for the target webhook URL:
- *   1. `-f` / `--fifo <ulid|url>` flag (per-call override)
+ *   1. `-f` / `--fifo <id|url>` flag (per-call override)
  *   2. `FIFOS_WEBHOOK` from the cwd `.env`
  *   3. Interactive TTY prompt → save to `.env`
  *   4. Error (exit 2) when stdin isn't a TTY
@@ -115,11 +115,11 @@ function resolveWebhookUrl(override: string | null): string {
   if (fromEnv) return canonicalize(fromEnv);
   if (!process.stdin.isTTY) {
     console.error(
-      "FIFOS_WEBHOOK not set. Pass -f <ulid|url>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
+      "FIFOS_WEBHOOK not set. Pass -f <id|url>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
     );
     process.exit(2);
   }
-  process.stdout.write("Enter your fifos webhook URL or ULID: ");
+  process.stdout.write("Enter your fifos webhook URL or identifier: ");
   const raw = readLineSync().trim();
   if (!raw) {
     console.error("No URL provided.");
@@ -187,13 +187,15 @@ function formatText(payload: any): string {
     if (Array.isArray(payload.items)) {
       return payload.items.length
         ? payload.items
-            .map(
-              (it: any) =>
-                `${String(it.position).padStart(4)}  ${it.status}  ${it.id}  ${truncate(
-                  it.data ?? "",
-                  80,
-                )}`,
-            )
+            .map((it: any) => {
+              const head = `${String(it.position).padStart(4)}  ${it.status}  ${it.id}  ${truncate(
+                it.data ?? "",
+                80,
+              )}`;
+              return it.status === "fail" && it.fail_reason
+                ? `${head}\n      ↳ ${truncate(it.fail_reason, 100)}`
+                : head;
+            })
             .join("\n")
         : "(empty)";
     }
@@ -428,12 +430,17 @@ function clearLockFile(): void {
 async function cmdAck(baseUrl: string, _parsed: Parsed): Promise<number> {
   return finishLocked(baseUrl, "ack");
 }
-async function cmdNack(baseUrl: string, _parsed: Parsed): Promise<number> {
-  return finishLocked(baseUrl, "nack");
+async function cmdNack(baseUrl: string, parsed: Parsed): Promise<number> {
+  // Optional reason: positional args take precedence; otherwise read stdin if
+  // it's a pipe (mirrors `push`). Empty body is valid — server stores NULL.
+  const fromArg = parsed.positional.join(" ");
+  const reason = fromArg || (await readStdin());
+  return finishLocked(baseUrl, "nack", reason);
 }
 async function finishLocked(
   baseUrl: string,
   verb: "ack" | "nack",
+  body?: string,
 ): Promise<number> {
   const id = readLockFile();
   if (!id) {
@@ -442,7 +449,12 @@ async function finishLocked(
     );
     return 2;
   }
-  const res = await request(baseUrl, "POST", `/${verb}/${id}`);
+  const init: { body?: string; headers?: Record<string, string> } = {};
+  if (body && body.length > 0) {
+    init.body = body;
+    init.headers = { "Content-Type": "text/plain; charset=utf-8" };
+  }
+  const res = await request(baseUrl, "POST", `/${verb}/${id}`, init);
   if (res.status === 200) {
     clearLockFile();
     return 0;
@@ -514,7 +526,16 @@ async function cmdList(baseUrl: string, parsed: Parsed): Promise<number> {
     return 2;
   }
   const n = Number(parsed.flags.get("items") ?? 10);
-  const res = await request(baseUrl, "GET", `/list/${status}?n=${n}`, {
+  const reason = parsed.flags.get("reason");
+  let path = `/list/${status}?n=${n}`;
+  if (typeof reason === "string" && reason.length > 0) {
+    if (status !== "fail") {
+      console.error("list: --reason only applies to status 'fail'");
+      return 2;
+    }
+    path += `&reason=${encodeURIComponent(reason)}`;
+  }
+  const res = await request(baseUrl, "GET", path, {
     headers: { Accept: "application/json" },
   });
   if (res.status !== 200) dieFromHttp(res);
@@ -579,18 +600,20 @@ Usage:
   fifos pop                      pop oldest open item (exit 1 if empty)
   fifos pop --block [--timeout N]  wait via SSE for a push, then pop
   fifos pull [--lock <dur>]      lock + write .fifos-lock (e.g. 600, 5m, 1h)
-  fifos ack | fifos nack         finalize the locked item from .fifos-lock
+  fifos ack                      mark the locked item done (clears .fifos-lock)
+  fifos nack [reason...]         mark it fail; reason is positional args or stdin (max 1 KiB)
   fifos status <id>              one item's state
   fifos retry <id>               move done/fail back to open at the tail
   fifos peek [--items=N]         oldest N open items
   fifos info                     counts summary
   fifos list <open|lock|done|fail> [--items=N]
+  fifos list fail --reason <substr>      filter fail by case-insensitive substring of fail_reason
   fifos open                     open this fifo's page in the browser
   fifos skill                    install agent skill for Claude / Cursor
   fifos help                     this message
 
 Global:
-  -f, --fifo <ulid|url>          override FIFOS_WEBHOOK for this call
+  -f, --fifo <id|url>            override FIFOS_WEBHOOK for this call
   --json | --yaml                JSON/YAML output for info/peek/list/status
 
 Setup:

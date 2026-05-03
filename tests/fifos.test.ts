@@ -246,4 +246,93 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(status).toBe(404);
     expect(body.error).toBe("not_found");
   });
+
+  test("GET /w/:ulid/list/fail?reason=… filters by substring (case-insensitive, literal % _)", async () => {
+    const create = await jpost("/", { name: "reason-filter" });
+    expect(create.status).toBe(201);
+    const fifoUlid: string = create.body.ulid;
+
+    // Push 4 items, pull + nack each with distinct fail_reasons.
+    const reasons = [
+      "OOM: ran out of memory",
+      "timeout after 30s",
+      "validation failed: 100% rejected",
+      "OOM: heap exhausted",
+    ];
+    for (const r of reasons) {
+      const push = await fetch(`${base}/w/${fifoUlid}/push`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: r.slice(0, 8),
+      });
+      expect(push.status).toBe(201);
+      const pull = await fetch(`${base}/w/${fifoUlid}/pull`, {
+        method: "POST",
+      });
+      const pulled = (await pull.json()) as { id: string };
+      const nack = await fetch(`${base}/w/${fifoUlid}/nack/${pulled.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: r,
+      });
+      expect(nack.status).toBe(200);
+    }
+
+    // Substring match — case-insensitive, returns 2 items.
+    const r1 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=oom`);
+    const j1 = (await r1.json()) as {
+      items: { fail_reason: string }[];
+    };
+    expect(j1.items.length).toBe(2);
+    for (const it of j1.items) expect(it.fail_reason.toLowerCase()).toContain("oom");
+
+    // SQL wildcard `%` is matched literally — finds the validation row only.
+    const r2 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=100%25`);
+    const j2 = (await r2.json()) as { items: { fail_reason: string }[] };
+    expect(j2.items.length).toBe(1);
+    expect(j2.items[0].fail_reason).toContain("100%");
+
+    // No match → empty list.
+    const r3 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=nonesuch`);
+    const j3 = (await r3.json()) as { items: unknown[] };
+    expect(j3.items).toEqual([]);
+
+    // reason on a non-fail status is silently ignored (returns whatever is there).
+    const r4 = await fetch(`${base}/w/${fifoUlid}/list/done?reason=oom`);
+    expect(r4.status).toBe(200);
+
+    // Free the fifo slot so subsequent tests can still create within the cap.
+    const del = await jdelete("/reason-filter");
+    expect(del.status).toBe(200);
+  });
+
+  test("POST /w/:ulid/nack/:id rejects bodies over 1 KiB with 400", async () => {
+    // Need a locked item to nack — create a fifo, push, pull.
+    const create = await jpost("/", { name: "nack-cap" });
+    expect(create.status).toBe(201);
+    const fifoUlid: string = create.body.ulid;
+
+    const pushRes = await fetch(`${base}/w/${fifoUlid}/push`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "needs nack",
+    });
+    expect(pushRes.status).toBe(201);
+
+    const pullRes = await fetch(`${base}/w/${fifoUlid}/pull`, {
+      method: "POST",
+    });
+    expect(pullRes.status).toBe(200);
+    const pulled = (await pullRes.json()) as { id: string };
+
+    const oversized = "x".repeat(1025);
+    const nackRes = await fetch(`${base}/w/${fifoUlid}/nack/${pulled.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: oversized,
+    });
+    expect(nackRes.status).toBe(400);
+    const j = (await nackRes.json()) as { error: string };
+    expect(j.error).toBe("invalid_request");
+  });
 });

@@ -46,6 +46,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_fifos_user_slug ON fifos(user_id, slug);
 -- status: 'open' (queued), 'lock' (pulled, awaiting ack), 'done' (popped or acked), 'fail' (nacked).
 -- data: the item body — UTF-8 text, max 64 KB (enforced at the API boundary).
 -- locked_until: unix-seconds; NULL except when status='lock'.
+-- fail_reason: optional diagnostic text supplied to nack; max 1 KiB. NULL except
+--   when status='fail' (and even then NULL is allowed if no reason was given).
+--   Cleared back to NULL on retry.
 CREATE TABLE IF NOT EXISTS items (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   fifo_id      INTEGER NOT NULL REFERENCES fifos(id) ON DELETE CASCADE,
@@ -54,6 +57,7 @@ CREATE TABLE IF NOT EXISTS items (
   status       TEXT    NOT NULL CHECK (status IN ('open','lock','done','fail')),
   data         TEXT    NOT NULL,
   locked_until INTEGER,
+  fail_reason  TEXT,
   created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
   updated_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );

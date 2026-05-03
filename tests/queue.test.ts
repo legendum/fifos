@@ -214,6 +214,32 @@ describe("queue.pull / ack / nack", () => {
     const pulled = q.pull(f.id, 60)!;
     const nacked = q.nack(f.id, pulled.id);
     expect(nacked!.status).toBe("fail");
+    // No reason supplied → fail_reason stays NULL.
+    expect(nacked!.fail_reason).toBeNull();
+  });
+
+  test("nack with a reason persists fail_reason", async () => {
+    const f = await mkFifo("pull-nack-reason");
+    q.push(f.id, "broken");
+    const pulled = q.pull(f.id, 60)!;
+    const nacked = q.nack(f.id, pulled.id, "exit code 42");
+    expect(nacked!.status).toBe("fail");
+    expect(nacked!.fail_reason).toBe("exit code 42");
+
+    // And the read-back reflects it too.
+    const fresh = getDb()
+      .query("SELECT fail_reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { fail_reason: string };
+    expect(fresh.fail_reason).toBe("exit code 42");
+  });
+
+  test("ack does NOT touch fail_reason and never sets one", async () => {
+    const f = await mkFifo("ack-no-reason");
+    q.push(f.id, "ok");
+    const pulled = q.pull(f.id, 60)!;
+    const acked = q.ack(f.id, pulled.id);
+    expect(acked!.status).toBe("done");
+    expect(acked!.fail_reason).toBeNull();
   });
 
   test("ack/nack on already-acked item returns null (not_locked)", async () => {
@@ -229,6 +255,22 @@ describe("queue.pull / ack / nack", () => {
   test("ack on unknown ulid returns null", async () => {
     const f = await mkFifo("ack-unknown");
     expect(q.ack(f.id, "ZZZZZZZZZZZZZZZZZZZZ")).toBeNull();
+  });
+
+  test("nack reason is preserved across ItemRow read paths", async () => {
+    const f = await mkFifo("nack-readback");
+    q.push(f.id, "data");
+    const pulled = q.pull(f.id, 60)!;
+    q.nack(f.id, pulled.id, "timeout after 30s");
+
+    // Direct SELECT (mirrors the read handlers).
+    const row = getDb()
+      .query(
+        "SELECT ulid AS id, status, fail_reason FROM items WHERE fifo_id = ? AND status = 'fail'",
+      )
+      .get(f.id) as { id: string; status: string; fail_reason: string };
+    expect(row.id).toBe(pulled.id);
+    expect(row.fail_reason).toBe("timeout after 30s");
   });
 });
 
@@ -348,6 +390,28 @@ describe("queue.retry", () => {
     const r = q.retry(f.id, pulled.id);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.row.status).toBe("open");
+  });
+
+  test("retry clears fail_reason back to NULL", async () => {
+    const f = await mkFifo("retry-clears-reason");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    q.nack(f.id, pulled.id, "hard fail");
+    const before = getDb()
+      .query("SELECT fail_reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { fail_reason: string };
+    expect(before.fail_reason).toBe("hard fail");
+
+    const r = q.retry(f.id, pulled.id);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.row.status).toBe("open");
+      expect(r.row.fail_reason).toBeNull();
+    }
+    const after = getDb()
+      .query("SELECT fail_reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { fail_reason: string | null };
+    expect(after.fail_reason).toBeNull();
   });
 
   test("retry on open → wrong_status", async () => {

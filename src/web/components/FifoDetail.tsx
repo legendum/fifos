@@ -214,6 +214,9 @@ export default function FifoDetail({
               <span className="item-age">{relativeAge(it.created_at)}</span>
             </div>
             <div className="item-body">{truncate(it.data)}</div>
+            {it.status === "fail" && it.fail_reason && (
+              <div className="item-fail-reason">{truncate(it.fail_reason)}</div>
+            )}
           </li>
         ))}
       </ul>
@@ -292,6 +295,14 @@ export default function FifoDetail({
               <pre className="dialog-code" style={{ whiteSpace: "pre-wrap" }}>
                 {expanded.data}
               </pre>
+              {expanded.status === "fail" && expanded.fail_reason && (
+                <div className="dialog-fail-reason">
+                  <div className="dialog-fail-reason-label">Reason</div>
+                  <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                    {expanded.fail_reason}
+                  </pre>
+                </div>
+              )}
             </div>
           </div>
         </div>
