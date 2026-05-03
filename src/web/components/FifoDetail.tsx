@@ -11,6 +11,7 @@ type Props = {
   fifo: FifoEntry;
   onBack: () => void;
   onRenamed: (updated: { name: string; slug: string }) => void;
+  filterQuery: string;
 };
 
 const STATUSES: ItemStatus[] = ["open", "lock", "done", "fail"];
@@ -32,7 +33,12 @@ function truncate(s: string, n = PUSH_TRUNCATE_LEN): string {
   return `${s.slice(0, n).trimEnd()}…`;
 }
 
-export default function FifoDetail({ fifo, onBack, onRenamed }: Props) {
+export default function FifoDetail({
+  fifo,
+  onBack,
+  onRenamed,
+  filterQuery,
+}: Props) {
   const [status, setStatus] = useState<ItemStatus>("open");
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<StatusCounts>(fifo.counts);
@@ -54,6 +60,12 @@ export default function FifoDetail({ fifo, onBack, onRenamed }: Props) {
     () => counts.open + counts.lock + counts.done + counts.fail,
     [counts],
   );
+
+  const filtered = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((it) => it.data.toLowerCase().includes(q));
+  }, [items, filterQuery]);
 
   const fetchDetail = useCallback(
     async (s: ItemStatus) => {
@@ -197,7 +209,7 @@ export default function FifoDetail({ fifo, onBack, onRenamed }: Props) {
       </div>
 
       <ul className="list">
-        {items.map((it) => (
+        {filtered.map((it) => (
           <li key={it.id} className="item-row" onClick={() => setExpanded(it)}>
             <div className="item-row-main">
               <span className={`item-status item-status--${it.status}`}>
@@ -211,11 +223,13 @@ export default function FifoDetail({ fifo, onBack, onRenamed }: Props) {
         ))}
       </ul>
 
-      {items.length === 0 && (
+      {filtered.length === 0 && (
         <p style={{ padding: 16, color: "#64748b", textAlign: "center" }}>
           {total === 0
             ? "Empty fifo. Tap + to push an item."
-            : `No ${status} items.`}
+            : items.length === 0
+              ? `No ${status} items.`
+              : "No items match the filter."}
         </p>
       )}
 

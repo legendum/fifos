@@ -143,6 +143,7 @@ export default function App() {
           key={selectedFifo.slug}
           fifo={selectedFifo}
           onBack={goBack}
+          filterQuery={filterQuery}
           onRenamed={({ name, slug }) => {
             setSelectedFifo((prev) => (prev ? { ...prev, name, slug } : null));
             window.history.replaceState(null, "", `/${slug}`);
