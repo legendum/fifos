@@ -2,6 +2,11 @@ import { chargeFifoCreate } from "../../lib/billing.js";
 import { MAX_FIFOS_PER_USER } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { toSlug, validateFifoName } from "../../lib/fifos.js";
+import {
+  emptyCounts,
+  type ItemStatus,
+  type StatusCounts,
+} from "../../lib/queue.js";
 import { publishUserFifos, subscribe } from "../../lib/sse.js";
 import { ulid } from "../../lib/ulid.js";
 import { json } from "../json.js";
@@ -18,14 +23,6 @@ type FifoRow = {
   updated_at: number;
 };
 
-type StatusCounts = {
-  todo: number;
-  lock: number;
-  done: number;
-  fail: number;
-  skip: number;
-};
-
 type FifoSummary = {
   name: string;
   slug: string;
@@ -37,13 +34,9 @@ type FifoSummary = {
 
 type CountRow = {
   fifo_id: number;
-  status: "todo" | "lock" | "done" | "fail" | "skip";
+  status: ItemStatus;
   n: number;
 };
-
-function emptyCounts(): StatusCounts {
-  return { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 };
-}
 
 function getCountsByFifo(fifoIds: number[]): Map<number, StatusCounts> {
   const map = new Map<number, StatusCounts>();
@@ -231,8 +224,8 @@ export function getFifo(
     statusParam === "done" || statusParam === "fail" || statusParam === "skip";
   const items = db
     .query(
-      `SELECT ulid AS id, position, status, data, locked_until,
-              fail_reason, skip_reason, created_at, updated_at
+      `SELECT ulid AS id, position, status, data, locked_until, reason,
+              created_at, updated_at
          FROM items
         WHERE fifo_id = ? AND status = ?
         ORDER BY position ${newestFirst ? "DESC" : "ASC"}`,

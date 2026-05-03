@@ -1,9 +1,10 @@
 import { chargeWebhookWrite } from "../../lib/billing.js";
-import { MAX_FAIL_REASON_BYTES, MAX_ITEM_BYTES } from "../../lib/constants.js";
+import { MAX_ITEM_BYTES, MAX_REASON_BYTES } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { parseDuration } from "../../lib/duration.js";
 import {
   done,
+  emptyCounts,
   fail,
   getFifoByUlid,
   pop,
@@ -11,6 +12,7 @@ import {
   push,
   retry,
   skip,
+  type StatusCounts,
 } from "../../lib/queue.js";
 import { publish, publishUserFifos, subscribe } from "../../lib/sse.js";
 import { json } from "../json.js";
@@ -68,6 +70,7 @@ export async function postPush(req: Request, ulid: string): Promise<Response> {
       id: result.id,
       position: result.position,
       created_at: result.created_at,
+      deduped: result.deduped,
     },
     result.deduped ? 200 : 201,
   );
@@ -82,7 +85,12 @@ export async function postPop(_req: Request, ulid: string): Promise<Response> {
 
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
+  publish(`fifo:${fifo.id}`, "change", {
+    id: row.id,
+    status: row.status,
+    position: row.position,
+    reason: null,
+  });
   notifyFifosChanged(fifo.user_id);
 
   return json({
@@ -106,7 +114,12 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
 
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
+  publish(`fifo:${fifo.id}`, "change", {
+    id: row.id,
+    status: row.status,
+    position: row.position,
+    reason: null,
+  });
   notifyFifosChanged(fifo.user_id);
 
   return json({
@@ -118,54 +131,49 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
   });
 }
 
-/** POST /w/:ulid/done/:id — locked item → done. */
-export async function postDone(
-  _req: Request,
-  ulid: string,
-  itemUlid: string,
-): Promise<Response> {
-  const fifo = getFifoByUlid(ulid);
-  if (!fifo) return notFoundUlid();
-  const row = done(fifo.id, itemUlid);
-  if (!row) return json({ error: "not_locked" }, 404);
-
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", { id: row.id, status: row.status });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({ id: row.id, status: row.status });
+/**
+ * Shared body→reason parser for done/fail/skip. Empty or whitespace-only body
+ * is treated as no reason (stored NULL). Returns `{ error }` if oversized.
+ */
+async function parseReasonBody(
+  req: Request,
+): Promise<{ reason: string | null } | { error: Response }> {
+  const buf = await req.arrayBuffer();
+  if (buf.byteLength > MAX_REASON_BYTES) {
+    return {
+      error: json(
+        {
+          error: "invalid_request",
+          message: `Reason exceeds ${MAX_REASON_BYTES} bytes`,
+        },
+        400,
+      ),
+    };
+  }
+  const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf).trim();
+  return { reason: raw.length > 0 ? raw : null };
 }
 
-/**
- * POST /w/:ulid/fail/:id — locked item → fail.
- *
- * Optional text/plain body is the failure reason (max 1 KiB). Empty body or
- * whitespace-only is treated as no reason (stored NULL). Mirrors the body
- * shape of `push` for CLI symmetry.
- */
-export async function postFail(
+type FinishVerb = (
+  fifoId: number,
+  itemUlid: string,
+  reason: string | null,
+) => ReturnType<typeof done>;
+
+/** Shared lock → terminal-state handler for done/fail/skip. */
+async function postFinish(
   req: Request,
   ulid: string,
   itemUlid: string,
+  verb: FinishVerb,
 ): Promise<Response> {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
 
-  const buf = await req.arrayBuffer();
-  if (buf.byteLength > MAX_FAIL_REASON_BYTES) {
-    return json(
-      {
-        error: "invalid_request",
-        message: `Reason exceeds ${MAX_FAIL_REASON_BYTES} bytes`,
-      },
-      400,
-    );
-  }
-  const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf).trim();
-  const reason = raw.length > 0 ? raw : null;
+  const parsed = await parseReasonBody(req);
+  if ("error" in parsed) return parsed.error;
 
-  const row = fail(fifo.id, itemUlid, reason);
+  const row = verb(fifo.id, itemUlid, parsed.reason);
   if (!row) return json({ error: "not_locked" }, 404);
 
   const chargeError = await chargeWebhookWrite(fifo.user_id);
@@ -173,54 +181,25 @@ export async function postFail(
   publish(`fifo:${fifo.id}`, "change", {
     id: row.id,
     status: row.status,
-    fail_reason: row.fail_reason,
+    position: row.position,
+    reason: row.reason,
   });
   notifyFifosChanged(fifo.user_id);
 
-  return json({ id: row.id, status: row.status, fail_reason: row.fail_reason });
+  return json({ id: row.id, status: row.status, reason: row.reason });
 }
 
-/**
- * POST /w/:ulid/skip/:id — locked item → skip (terminal; retry refuses).
- *
- * Optional text/plain body is the skip reason (max 1 KiB). Same body contract
- * as `fail`.
- */
-export async function postSkip(
-  req: Request,
-  ulid: string,
-  itemUlid: string,
-): Promise<Response> {
-  const fifo = getFifoByUlid(ulid);
-  if (!fifo) return notFoundUlid();
+/** POST /w/:ulid/done/:id — locked item → done. Optional reason body (max 1 KiB). */
+export const postDone = (req: Request, ulid: string, itemUlid: string) =>
+  postFinish(req, ulid, itemUlid, done);
 
-  const buf = await req.arrayBuffer();
-  if (buf.byteLength > MAX_FAIL_REASON_BYTES) {
-    return json(
-      {
-        error: "invalid_request",
-        message: `Reason exceeds ${MAX_FAIL_REASON_BYTES} bytes`,
-      },
-      400,
-    );
-  }
-  const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf).trim();
-  const reason = raw.length > 0 ? raw : null;
+/** POST /w/:ulid/fail/:id — locked item → fail (retryable). Optional reason body. */
+export const postFail = (req: Request, ulid: string, itemUlid: string) =>
+  postFinish(req, ulid, itemUlid, fail);
 
-  const row = skip(fifo.id, itemUlid, reason);
-  if (!row) return json({ error: "not_locked" }, 404);
-
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", {
-    id: row.id,
-    status: row.status,
-    skip_reason: row.skip_reason,
-  });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({ id: row.id, status: row.status, skip_reason: row.skip_reason });
-}
+/** POST /w/:ulid/skip/:id — locked item → skip (terminal; retry refuses). Optional reason body. */
+export const postSkip = (req: Request, ulid: string, itemUlid: string) =>
+  postFinish(req, ulid, itemUlid, skip);
 
 /** POST /w/:ulid/retry/:id — done/fail item → todo at the tail (same id). */
 export async function postRetry(
@@ -245,20 +224,13 @@ export async function postRetry(
   publish(`fifo:${fifo.id}`, "change", {
     id: row.id,
     status: row.status,
-    fail_reason: null,
+    position: row.position,
+    reason: null,
   });
   notifyFifosChanged(fifo.user_id);
 
   return json({ id: row.id, status: row.status, position: row.position });
 }
-
-type StatusCounts = {
-  todo: number;
-  lock: number;
-  done: number;
-  fail: number;
-  skip: number;
-};
 
 function getCounts(fifoId: number): StatusCounts {
   const db = getDb();
@@ -267,7 +239,7 @@ function getCounts(fifoId: number): StatusCounts {
       "SELECT status, COUNT(*) as n FROM items WHERE fifo_id = ? GROUP BY status",
     )
     .all(fifoId) as Array<{ status: keyof StatusCounts; n: number }>;
-  const counts: StatusCounts = { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 };
+  const counts = emptyCounts();
   for (const r of rows) counts[r.status] = r.n;
   return counts;
 }
@@ -338,10 +310,11 @@ export function getPeek(req: Request, ulid: string): Response {
 /**
  * GET /w/:ulid/list/:status?n=5[&reason=<substr>]
  *
- * `reason` is a case-insensitive substring filter against `fail_reason`. Only
- * meaningful for status=`fail`; ignored otherwise (rather than 400, since a
- * client might pipe the same query across statuses). `%` `_` `\` in the input
- * are escaped so the pattern matches literal text.
+ * `reason` is a case-insensitive substring filter against the `reason` column.
+ * Only meaningful for terminal statuses (`done`/`fail`/`skip`); ignored on
+ * `todo`/`lock` (rather than 400, since a client might pipe the same query
+ * across statuses). `%` `_` `\` in the input are escaped so the pattern
+ * matches literal text.
  *
  * Free.
  */
@@ -359,30 +332,22 @@ export function getList(req: Request, ulid: string, status: string): Response {
   }
   const url = new URL(req.url);
   const n = clampN(url.searchParams.get("n"));
-  const newestFirst =
-    status === "done" || status === "fail" || status === "skip";
+  const terminal = status === "done" || status === "fail" || status === "skip";
 
   const reasonRaw = url.searchParams.get("reason");
-  const reasonCol =
-    status === "fail"
-      ? "fail_reason"
-      : status === "skip"
-        ? "skip_reason"
-        : null;
-  const useReason =
-    reasonCol !== null && reasonRaw !== null && reasonRaw.length > 0;
+  const useReason = terminal && reasonRaw !== null && reasonRaw.length > 0;
   const reasonPattern = useReason ? `%${escapeLike(reasonRaw)}%` : null;
 
   const db = getDb();
-  const sql = `SELECT ulid AS id, position, status, data, locked_until,
-                      fail_reason, skip_reason, created_at, updated_at
+  const sql = `SELECT ulid AS id, position, status, data, locked_until, reason,
+                      created_at, updated_at
                  FROM items
                 WHERE fifo_id = ? AND status = ?${
                   useReason
-                    ? ` AND ${reasonCol} IS NOT NULL AND ${reasonCol} LIKE ? ESCAPE '\\'`
+                    ? " AND reason IS NOT NULL AND reason LIKE ? ESCAPE '\\'"
                     : ""
                 }
-                ORDER BY position ${newestFirst ? "DESC" : "ASC"}
+                ORDER BY position ${terminal ? "DESC" : "ASC"}
                 LIMIT ?`;
   const items = useReason
     ? db.query(sql).all(fifo.id, status, reasonPattern, n)
@@ -406,7 +371,7 @@ export function getStatus(
   const db = getDb();
   const row = db
     .query(
-      `SELECT ulid AS id, status, position, fail_reason, created_at, updated_at
+      `SELECT ulid AS id, status, position, reason, created_at, updated_at
          FROM items WHERE fifo_id = ? AND ulid = ?`,
     )
     .get(fifo.id, itemUlid) as
@@ -414,7 +379,7 @@ export function getStatus(
         id: string;
         status: string;
         position: number;
-        fail_reason: string | null;
+        reason: string | null;
         created_at: number;
         updated_at: number;
       }

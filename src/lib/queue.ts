@@ -24,6 +24,12 @@ import { ulid as makeUlid } from "./ulid.js";
 
 export type ItemStatus = "todo" | "lock" | "done" | "fail" | "skip";
 
+export type StatusCounts = Record<ItemStatus, number>;
+
+export function emptyCounts(): StatusCounts {
+  return { todo: 0, lock: 0, done: 0, fail: 0, skip: 0 };
+}
+
 export type ItemRow = {
   id: string;
   position: number;
@@ -32,8 +38,7 @@ export type ItemRow = {
   updated_at: number;
   status: ItemStatus;
   locked_until: number | null;
-  fail_reason: string | null;
-  skip_reason: string | null;
+  reason: string | null;
 };
 
 export type PushResult = {
@@ -128,7 +133,7 @@ function loadItemById(id: number): ItemRow | null {
   const row = db
     .query(
       `SELECT ulid AS id, position, data, created_at, updated_at, status,
-              locked_until, fail_reason, skip_reason
+              locked_until, reason
          FROM items WHERE id = ?`,
     )
     .get(id) as ItemRow | undefined;
@@ -295,9 +300,18 @@ export function pull(
   })();
 }
 
-/** Mark a locked item done. Returns null if it's not in 'lock' anymore. */
-export function done(fifoId: number, itemUlid: string): ItemRow | null {
-  return finishLocked(fifoId, itemUlid, "done", null);
+/**
+ * Mark a locked item done. Returns null if it's not in 'lock' anymore.
+ *
+ * `reason` is optional one-line metadata for triage (e.g. "cached hit", token
+ * counts). Same length contract as `fail`/`skip`.
+ */
+export function done(
+  fifoId: number,
+  itemUlid: string,
+  reason?: string | null,
+): ItemRow | null {
+  return finishLocked(fifoId, itemUlid, "done", reason ?? null);
 }
 
 /**
@@ -343,13 +357,11 @@ function finishLocked(
     if (row.status !== "lock") return null;
     db.run(
       `UPDATE items
-          SET status = ?, locked_until = NULL,
-              fail_reason = ?, skip_reason = ?,
+          SET status = ?, locked_until = NULL, reason = ?,
               updated_at = strftime('%s','now')
         WHERE id = ?`,
       next,
-      next === "fail" ? reason : null,
-      next === "skip" ? reason : null,
+      reason,
       row.id,
     );
     return loadItemById(row.id);
@@ -387,8 +399,7 @@ export function retry(
     db.run(
       `UPDATE items
           SET status = 'todo', position = ?, locked_until = NULL,
-              fail_reason = NULL, skip_reason = NULL,
-              updated_at = strftime('%s','now')
+              reason = NULL, updated_at = strftime('%s','now')
         WHERE id = ?`,
       seqRow.seq,
       row.id,

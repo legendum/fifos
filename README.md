@@ -49,12 +49,11 @@ fifos -f http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C info
 | `fifos done` | Mark the locked item `done`; clears `.fifos-lock`. |
 | `fifos fail [reason words...]` | Mark it `fail` (retryable); positional args (or stdin) become the diagnostic reason (max 1 KiB). |
 | `fifos skip [reason words...]` | Mark it `skip` (terminal — `retry` refuses); same reason rules as `fail`. |
-| `fifos status <id>` | One item's state, including `fail_reason`. |
-| `fifos retry <id>` | Move a `done`/`fail` item back to `todo` at the tail; same id, `fail_reason` cleared. Refuses `skip`. |
+| `fifos status <id>` | One item's state, including the `reason` (set on done/fail/skip). |
+| `fifos retry <id>` | Move a `done`/`fail` item back to `todo` at the tail; same id, `reason` cleared. Refuses `skip`. |
 | `fifos peek [--items N]` | Up to N oldest `todo` items, no status change. |
 | `fifos list <todo\|lock\|done\|fail\|skip>` | List items. `done`/`fail`/`skip` come back newest-first; `todo`/`lock` oldest-first. |
-| `fifos list fail --reason <substr>` | Filter failed items by case-insensitive substring of `fail_reason`. |
-| `fifos list skip --reason <substr>` | Filter skipped items by case-insensitive substring of `skip_reason`. |
+| `fifos list <done\|fail\|skip> --reason <substr>` | Filter terminal items by case-insensitive substring of `reason`. |
 | `fifos info` | Counts summary. |
 | `fifos open` | Open this fifo's web page in the browser. |
 | `fifos skill` | Install the agent skill at `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`. |
@@ -97,14 +96,13 @@ JSON is the default; append `.yaml` (or `Accept: application/yaml`) for YAML.
   "status": "fail",
   "data": "process payment for invoice #4421",
   "locked_until": null,
-  "fail_reason": "OOM: ran out of memory",
-  "skip_reason": null,
+  "reason": "OOM: ran out of memory",
   "created_at": 1746278400,
   "updated_at": 1746278465
 }
 ```
 
-`fail_reason` is set only when `status="fail"`. `skip_reason` is set only when `status="skip"`. `locked_until` is `null` unless `status="lock"`. Timestamps are unix seconds.
+`reason` is set only when `status` is one of `done`/`fail`/`skip` (and even then it can be null if no reason was supplied). `locked_until` is `null` unless `status="lock"`. Timestamps are unix seconds.
 
 ## State machine
 

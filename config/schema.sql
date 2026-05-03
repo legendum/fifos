@@ -48,12 +48,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_fifos_user_slug ON fifos(user_id, slug);
 --   'fail' (marked fail — retryable), 'skip' (marked skip — terminal, not retryable).
 -- data: the item body — UTF-8 text, max 64 KB (enforced at the API boundary).
 -- locked_until: unix-seconds; NULL except when status='lock'.
--- fail_reason: optional diagnostic text supplied to fail; max 1 KiB. NULL except
---   when status='fail' (and even then NULL is allowed if no reason was given).
---   Cleared back to NULL on retry.
--- skip_reason: same shape as fail_reason but for status='skip'. NULL except when
---   status='skip' (NULL still allowed). Cleared on retry, but retry refuses 'skip'
---   so this column never actually round-trips through retry.
+-- reason: optional one-line metadata supplied to done/fail/skip; max 1 KiB.
+--   Recommended convention: "what happened" for triage — e.g. "cached hit"
+--   on done, "OOM at step 3" on fail, "malformed payload" on skip.
+--   NULL except when status in ('done','fail','skip') — and even then NULL is
+--   allowed if no reason was given. Cleared back to NULL on retry.
 CREATE TABLE IF NOT EXISTS items (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   fifo_id      INTEGER NOT NULL REFERENCES fifos(id) ON DELETE CASCADE,
@@ -62,8 +61,7 @@ CREATE TABLE IF NOT EXISTS items (
   status       TEXT    NOT NULL CHECK (status IN ('todo','lock','done','fail','skip')),
   data         TEXT    NOT NULL,
   locked_until INTEGER,
-  fail_reason  TEXT,
-  skip_reason  TEXT,
+  reason       TEXT,
   created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
   updated_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );

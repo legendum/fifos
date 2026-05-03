@@ -31,8 +31,8 @@ export const MAX_ITEMS_PER_FIFO = Number(
 
 export const MAX_ITEM_BYTES = Number(process.env.FIFOS_MAX_ITEM_BYTES || 65536);
 
-/** Max length of the optional `fail` reason body. Diagnostic text, not a payload. */
-export const MAX_FAIL_REASON_BYTES = 1024;
+/** Max length of the optional `reason` body on done/fail/skip. Diagnostic text, not a payload. */
+export const MAX_REASON_BYTES = 1024;
 
 export const MAX_FIFOS_PER_USER = Number(
   process.env.FIFOS_MAX_FIFOS_PER_USER || 50,

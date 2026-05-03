@@ -198,7 +198,7 @@ describe("CLI .fifos-lock lifecycle", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test("fail with positional reason persists fail_reason", async () => {
+  test("fail with positional reason persists reason", async () => {
     const push = await runCli(["push", "boom-target"]);
     expect(push.exitCode).toBe(0);
     const itemId = push.stdout.trim();
@@ -210,10 +210,10 @@ describe("CLI .fifos-lock lifecycle", () => {
     const status = await fetch(`${base}/w/${fifoUlid}/status/${itemId}`);
     const j = (await status.json()) as {
       status: string;
-      fail_reason: string | null;
+      reason: string | null;
     };
     expect(j.status).toBe("fail");
-    expect(j.fail_reason).toBe("ran out of memory");
+    expect(j.reason).toBe("ran out of memory");
   });
 
   test("fail reads stdin when no positional reason is given", async () => {
@@ -226,8 +226,8 @@ describe("CLI .fifos-lock lifecycle", () => {
     expect(failRes.exitCode).toBe(0);
 
     const status = await fetch(`${base}/w/${fifoUlid}/status/${itemId}`);
-    const j = (await status.json()) as { fail_reason: string | null };
-    expect(j.fail_reason).toBe("stack trace from logs");
+    const j = (await status.json()) as { reason: string | null };
+    expect(j.reason).toBe("stack trace from logs");
   });
 
   test("done with no .fifos-lock: exit 2", async () => {

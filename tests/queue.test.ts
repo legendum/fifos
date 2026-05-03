@@ -214,32 +214,41 @@ describe("queue.pull / done / fail", () => {
     const pulled = q.pull(f.id, 60)!;
     const failed = q.fail(f.id, pulled.id);
     expect(failed!.status).toBe("fail");
-    // No reason supplied → fail_reason stays NULL.
-    expect(failed!.fail_reason).toBeNull();
+    // No reason supplied → reason stays NULL.
+    expect(failed!.reason).toBeNull();
   });
 
-  test("fail with a reason persists fail_reason", async () => {
+  test("fail with a reason persists reason", async () => {
     const f = await mkFifo("pull-fail-reason");
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
     const failed = q.fail(f.id, pulled.id, "exit code 42");
     expect(failed!.status).toBe("fail");
-    expect(failed!.fail_reason).toBe("exit code 42");
+    expect(failed!.reason).toBe("exit code 42");
 
     // And the read-back reflects it too.
     const fresh = getDb()
-      .query("SELECT fail_reason FROM items WHERE ulid = ?")
-      .get(pulled.id) as { fail_reason: string };
-    expect(fresh.fail_reason).toBe("exit code 42");
+      .query("SELECT reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { reason: string };
+    expect(fresh.reason).toBe("exit code 42");
   });
 
-  test("done does NOT touch fail_reason and never sets one", async () => {
+  test("done without a reason stores NULL", async () => {
     const f = await mkFifo("done-no-reason");
     q.push(f.id, "ok");
     const pulled = q.pull(f.id, 60)!;
     const finished = q.done(f.id, pulled.id);
     expect(finished!.status).toBe("done");
-    expect(finished!.fail_reason).toBeNull();
+    expect(finished!.reason).toBeNull();
+  });
+
+  test("done with a reason persists reason", async () => {
+    const f = await mkFifo("done-with-reason");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    const finished = q.done(f.id, pulled.id, "cached hit");
+    expect(finished!.status).toBe("done");
+    expect(finished!.reason).toBe("cached hit");
   });
 
   test("done/fail on already-finalized item returns null (not_locked)", async () => {
@@ -266,11 +275,11 @@ describe("queue.pull / done / fail", () => {
     // Direct SELECT (mirrors the read handlers).
     const row = getDb()
       .query(
-        "SELECT ulid AS id, status, fail_reason FROM items WHERE fifo_id = ? AND status = 'fail'",
+        "SELECT ulid AS id, status, reason FROM items WHERE fifo_id = ? AND status = 'fail'",
       )
-      .get(f.id) as { id: string; status: string; fail_reason: string };
+      .get(f.id) as { id: string; status: string; reason: string };
     expect(row.id).toBe(pulled.id);
-    expect(row.fail_reason).toBe("timeout after 30s");
+    expect(row.reason).toBe("timeout after 30s");
   });
 });
 
@@ -392,26 +401,26 @@ describe("queue.retry", () => {
     if (r.ok) expect(r.row.status).toBe("todo");
   });
 
-  test("retry clears fail_reason back to NULL", async () => {
+  test("retry clears reason back to NULL", async () => {
     const f = await mkFifo("retry-clears-reason");
     q.push(f.id, "x");
     const pulled = q.pull(f.id, 60)!;
     q.fail(f.id, pulled.id, "hard fail");
     const before = getDb()
-      .query("SELECT fail_reason FROM items WHERE ulid = ?")
-      .get(pulled.id) as { fail_reason: string };
-    expect(before.fail_reason).toBe("hard fail");
+      .query("SELECT reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { reason: string };
+    expect(before.reason).toBe("hard fail");
 
     const r = q.retry(f.id, pulled.id);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.row.status).toBe("todo");
-      expect(r.row.fail_reason).toBeNull();
+      expect(r.row.reason).toBeNull();
     }
     const after = getDb()
-      .query("SELECT fail_reason FROM items WHERE ulid = ?")
-      .get(pulled.id) as { fail_reason: string | null };
-    expect(after.fail_reason).toBeNull();
+      .query("SELECT reason FROM items WHERE ulid = ?")
+      .get(pulled.id) as { reason: string | null };
+    expect(after.reason).toBeNull();
   });
 
   test("retry on todo → wrong_status", async () => {
@@ -450,14 +459,13 @@ describe("queue.retry", () => {
 });
 
 describe("queue.skip", () => {
-  test("skip marks 'skip' and persists skip_reason", async () => {
+  test("skip marks 'skip' and persists reason", async () => {
     const f = await mkFifo("pull-skip-reason");
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
     const skipped = q.skip(f.id, pulled.id, "malformed payload");
     expect(skipped!.status).toBe("skip");
-    expect(skipped!.skip_reason).toBe("malformed payload");
-    expect(skipped!.fail_reason).toBeNull();
+    expect(skipped!.reason).toBe("malformed payload");
   });
 
   test("skip without a reason stores NULL", async () => {
@@ -466,7 +474,7 @@ describe("queue.skip", () => {
     const pulled = q.pull(f.id, 60)!;
     const skipped = q.skip(f.id, pulled.id);
     expect(skipped!.status).toBe("skip");
-    expect(skipped!.skip_reason).toBeNull();
+    expect(skipped!.reason).toBeNull();
   });
 
   test("skip on already-finalized item returns null (not_locked)", async () => {

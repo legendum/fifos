@@ -23,8 +23,7 @@ export type Item = {
   status: ItemStatus;
   data: string;
   locked_until: number | null;
-  fail_reason: string | null;
-  skip_reason: string | null;
+  reason: string | null;
   created_at: number;
   updated_at: number;
 };

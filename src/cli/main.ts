@@ -194,13 +194,9 @@ function formatText(payload: any): string {
                 it.data ?? "",
                 80,
               )}`;
-              if (it.status === "fail" && it.fail_reason) {
-                return `${head}\n      ↳ ${truncate(it.fail_reason, 100)}`;
-              }
-              if (it.status === "skip" && it.skip_reason) {
-                return `${head}\n      ↳ ${truncate(it.skip_reason, 100)}`;
-              }
-              return head;
+              return it.reason
+                ? `${head}\n      ↳ ${truncate(it.reason, 100)}`
+                : head;
             })
             .join("\n")
         : "(empty)";
@@ -433,20 +429,21 @@ function clearLockFile(): void {
   if (existsSync(path)) unlinkSync(path);
 }
 
-async function cmdDone(baseUrl: string, _parsed: Parsed): Promise<number> {
-  return finishLocked(baseUrl, "done");
+// Optional reason: positional args take precedence; otherwise read stdin if
+// it's a pipe (mirrors `push`). Empty body is valid — server stores NULL.
+async function readReason(parsed: Parsed): Promise<string> {
+  const fromArg = parsed.positional.join(" ");
+  return fromArg || (await readStdin());
+}
+
+async function cmdDone(baseUrl: string, parsed: Parsed): Promise<number> {
+  return finishLocked(baseUrl, "done", await readReason(parsed));
 }
 async function cmdFail(baseUrl: string, parsed: Parsed): Promise<number> {
-  // Optional reason: positional args take precedence; otherwise read stdin if
-  // it's a pipe (mirrors `push`). Empty body is valid — server stores NULL.
-  const fromArg = parsed.positional.join(" ");
-  const reason = fromArg || (await readStdin());
-  return finishLocked(baseUrl, "fail", reason);
+  return finishLocked(baseUrl, "fail", await readReason(parsed));
 }
 async function cmdSkip(baseUrl: string, parsed: Parsed): Promise<number> {
-  const fromArg = parsed.positional.join(" ");
-  const reason = fromArg || (await readStdin());
-  return finishLocked(baseUrl, "skip", reason);
+  return finishLocked(baseUrl, "skip", await readReason(parsed));
 }
 async function finishLocked(
   baseUrl: string,
@@ -540,8 +537,8 @@ async function cmdList(baseUrl: string, parsed: Parsed): Promise<number> {
   const reason = parsed.flags.get("reason");
   let path = `/list/${status}?n=${n}`;
   if (typeof reason === "string" && reason.length > 0) {
-    if (status !== "fail" && status !== "skip") {
-      console.error("list: --reason only applies to 'fail' or 'skip'");
+    if (status !== "done" && status !== "fail" && status !== "skip") {
+      console.error("list: --reason only applies to 'done', 'fail', or 'skip'");
       return 2;
     }
     path += `&reason=${encodeURIComponent(reason)}`;
@@ -611,16 +608,15 @@ Usage:
   fifos pop                      pop oldest todo item (exit 1 if empty)
   fifos pop --block [--timeout N]  wait via SSE for a push, then pop
   fifos pull [--lock <dur>]      lock + write .fifos-lock (e.g. 600, 5m, 1h)
-  fifos done                     mark the locked item done (clears .fifos-lock)
-  fifos fail [reason...]         mark it fail (retryable); reason is positional args or stdin (max 1 KiB)
+  fifos done [reason...]         mark the locked item done; optional one-line reason (positional or stdin, max 1 KiB)
+  fifos fail [reason...]         mark it fail (retryable); same reason rules
   fifos skip [reason...]         mark it skip (terminal — retry refused); same reason rules
   fifos status <id>              one item's state
   fifos retry <id>               move done/fail back to todo at the tail (skip is terminal)
   fifos peek [--items=N]         oldest N todo items
   fifos info                     counts summary
   fifos list <todo|lock|done|fail|skip> [--items=N]
-  fifos list fail --reason <substr>      filter fail by case-insensitive substring of fail_reason
-  fifos list skip --reason <substr>      filter skip by case-insensitive substring of skip_reason
+  fifos list <done|fail|skip> --reason <substr>      filter terminal items by case-insensitive substring of reason
   fifos open                     open this fifo's page in the browser
   fifos skill                    install agent skill for Claude / Cursor
   fifos help                     this message

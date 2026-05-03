@@ -253,7 +253,7 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(create.status).toBe(201);
     const fifoUlid: string = create.body.ulid;
 
-    // Push 4 items, pull + nack each with distinct fail_reasons.
+    // Push 4 items, pull + nack each with distinct reasons.
     const reasons = [
       "OOM: ran out of memory",
       "timeout after 30s",
@@ -282,16 +282,16 @@ describe("Fifos CRUD — self-hosted", () => {
     // Substring match — case-insensitive, returns 2 items.
     const r1 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=oom`);
     const j1 = (await r1.json()) as {
-      items: { fail_reason: string }[];
+      items: { reason: string }[];
     };
     expect(j1.items.length).toBe(2);
-    for (const it of j1.items) expect(it.fail_reason.toLowerCase()).toContain("oom");
+    for (const it of j1.items) expect(it.reason.toLowerCase()).toContain("oom");
 
     // SQL wildcard `%` is matched literally — finds the validation row only.
     const r2 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=100%25`);
-    const j2 = (await r2.json()) as { items: { fail_reason: string }[] };
+    const j2 = (await r2.json()) as { items: { reason: string }[] };
     expect(j2.items.length).toBe(1);
-    expect(j2.items[0].fail_reason).toContain("100%");
+    expect(j2.items[0].reason).toContain("100%");
 
     // No match → empty list.
     const r3 = await fetch(`${base}/w/${fifoUlid}/list/fail?reason=nonesuch`);

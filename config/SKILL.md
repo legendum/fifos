@@ -10,13 +10,14 @@ Use the `fifos` CLI to push/pop work items on a FIFO queue.
 - `fifos push "data"` — append an item. Use `--key <id>` for retry-safe pushes.
 - `fifos pop` — fire-and-forget consume (item → done).
 - `fifos pop --block [--timeout 60]` — wait via SSE until something is pushed, then pop. Exits 1 cleanly on timeout.
-- `fifos pull [--lock 30m]` — at-least-once consume (item → lock). Then `fifos done` on success, `fifos fail [reason...]` for retryable failure, or `fifos skip [reason...]` for terminal rejection (malformed/unsupported). Default lock is 30 min; extend up to 1h if your work needs longer.
-- `fifos fail [reason...]` — fail the locked item (retryable); positional args (or stdin) become the diagnostic reason (max 1 KiB), stored on the item and shown in the GUI / `list fail` output.
+- `fifos pull [--lock 30m]` — at-least-once consume (item → lock). Then `fifos done [reason...]` on success, `fifos fail [reason...]` for retryable failure, or `fifos skip [reason...]` for terminal rejection (malformed/unsupported). Default lock is 30 min; extend up to 1h if your work needs longer.
+- `fifos done [reason...]` — mark the locked item done. Optional one-line reason (positional args or stdin, max 1 KiB) is stored on the item — useful as agent metadata for triage (e.g. `fifos done "cached hit"`, `fifos done "3 turns, 1.2k tokens"`).
+- `fifos fail [reason...]` — fail the locked item (retryable); diagnostic reason stored on the item.
 - `fifos skip [reason...]` — skip the locked item (terminal — `retry` refuses). Use for permanent rejections: malformed payload, unsupported version, deprecated job kind. Same reason rules as `fail`.
-- `fifos status <id>` — check whether a previously-pushed item has been processed. Includes `fail_reason` / `skip_reason` on failed/skipped items.
-- `fifos retry <id>` — resubmit a done/fail item to the tail (clears `fail_reason`). Refuses `skip` (terminal).
+- `fifos status <id>` — check whether a previously-pushed item has been processed. Includes the `reason` field (set on done/fail/skip).
+- `fifos retry <id>` — resubmit a done/fail item to the tail (clears `reason`). Refuses `skip` (terminal).
 - `fifos info` / `fifos peek` / `fifos list <todo|lock|done|fail|skip>` — inspect the queue. `done`/`fail`/`skip` come back newest-first; `todo`/`lock` oldest-first. Add `--json` or `--yaml` for machine-readable output.
-- `fifos list fail --reason <substr>` / `fifos list skip --reason <substr>` — filter by case-insensitive substring of `fail_reason` / `skip_reason` (e.g. `--reason oom`).
+- `fifos list <done|fail|skip> --reason <substr>` — filter terminal items by case-insensitive substring of `reason` (e.g. `--reason oom`).
 
 ## When to use what
 - Pushing background work: `push` (with `--key` if retrying).

@@ -158,7 +158,7 @@ A skill file (`config/SKILL.md`) installed by `fifos skill` to `~/.claude/skills
 
 - **users**: `id` (PK), `email` (UNIQUE NOT NULL), `legendum_token`, `created_at`. Identical to todos.
 - **fifos**: `id` (PK), `user_id` (FK), `ulid` (UNIQUE), `name`, `slug`, `position` (INTEGER, user-defined ordering; new fifos get `MAX(position)+1`), `seq` (INTEGER, last-issued item position; starts at 0), `created_at`, `updated_at`. Listed by `position` ASC, then `id` ASC.
-- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public id for done/fail/skip/status/retry), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `todo` | `lock` | `done` | `fail` | `skip`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `fail_reason` (TEXT, optional diagnostic supplied to fail; NULL except when status=`fail`; cleared on retry), `skip_reason` (TEXT, same shape but for status=`skip`), `created_at`, `updated_at`.
+- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public id for done/fail/skip/status/retry), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `todo` | `lock` | `done` | `fail` | `skip`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `reason` (TEXT, optional one-line metadata supplied to done/fail/skip — recommended convention is "what happened" for triage; NULL otherwise; cleared on retry), `created_at`, `updated_at`.
 - **idempotency**: `fifo_id` (FK), `key` (TEXT), `item_id` (FK → items.id), `created_at`. **PRIMARY KEY (fifo_id, key)**. Used to dedupe `POST /push` with `Idempotency-Key`. Rows older than 1h are swept by the same purger as done/fail items.
 
 Indexes:
@@ -319,14 +319,14 @@ In every response below, the `id` field is the **item ULID** (26 chars, Crockfor
 | `POST /w/:ulid/push` | item body. Optional `Idempotency-Key: <s>`. | `201 { id, position, created_at }`. With idempotency key seen in last 1h: `200` with the **same** id, no charge. | **0.01** |
 | `POST /w/:ulid/pop` | — | `200 { id, data, position, created_at }` (status now `done`) or `204` if empty | **0.01** |
 | `POST /w/:ulid/pull[?lock=<dur>]` | — | `200 { id, data, position, created_at, locked_until }` (status now `lock`) or `204` if empty. `lock` accepts seconds (`600`), or `1800s`/`30m`/`1h`. Clamped to `[10s, 1h]`. Default 30 min. | **0.01** |
-| `POST /w/:ulid/done/:id` | — | `200 { id, status: "done" }`. `404 { error: "not_locked" }` if id not currently `lock`. | **0.01** |
-| `POST /w/:ulid/fail/:id` | optional `text/plain` body = failure reason (max 1 KiB; whitespace-only treated as no reason). | `200 { id, status: "fail", fail_reason }`. `400 invalid_request` if body exceeds 1 KiB. `404` if id not currently `lock`. | **0.01** |
-| `POST /w/:ulid/skip/:id` | optional `text/plain` body = skip reason (same contract as `fail`). | `200 { id, status: "skip", skip_reason }`. Same errors as `fail`. **Terminal** — `retry` refuses. | **0.01** |
+| `POST /w/:ulid/done/:id` | optional `text/plain` body = reason (max 1 KiB; whitespace-only treated as no reason). | `200 { id, status: "done", reason }`. `400 invalid_request` if body exceeds 1 KiB. `404` if id not currently `lock`. | **0.01** |
+| `POST /w/:ulid/fail/:id` | optional `text/plain` body = failure reason (same contract as `done`). | `200 { id, status: "fail", reason }`. Same errors. **Retryable**. | **0.01** |
+| `POST /w/:ulid/skip/:id` | optional `text/plain` body = skip reason (same contract as `done`). | `200 { id, status: "skip", reason }`. Same errors. **Terminal** — `retry` refuses. | **0.01** |
 | `POST /w/:ulid/retry/:id` | — | `200 { id, status: "todo", position }` — moves a `done`/`fail` item back to `todo` at the tail (new position from `seq`, same id). `404` if id unknown; `409 { error: "wrong_status" }` if currently `todo`, `lock`, or `skip`. | **0.01** |
-| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, fail_reason, skip_reason, created_at, updated_at }`. `fail_reason` only set when status=`fail`; `skip_reason` only when status=`skip`; otherwise null. `404` if id unknown. | free |
+| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, reason, created_at, updated_at }`. `reason` only set on `done`/`fail`/`skip`. `404` if id unknown. | free |
 | `GET /w/:ulid/peek?n=5` | — | `200 { items: [...] }` — up to N oldest `todo` items, no status change. Default n=10, max 100. | free |
 | `GET /w/:ulid/info` | — | `200 { name, slug, ulid, counts: {...}, total }` | free |
-| `GET /w/:ulid/list/:status?n=5[&reason=<substr>]` | — | `200 { items: [...] }`. `todo`/`lock`: oldest first. `done`/`fail`/`skip`: newest first. Default n=10, max 100. `reason` is a case-insensitive substring filter — applied to `fail_reason` when status=`fail`, `skip_reason` when status=`skip`, ignored for other statuses. SQL `%`/`_`/`\\` in the substring are matched literally. | free |
+| `GET /w/:ulid/list/:status?n=5[&reason=<substr>]` | — | `200 { items: [...] }`. `todo`/`lock`: oldest first. `done`/`fail`/`skip`: newest first. Default n=10, max 100. `reason` is a case-insensitive substring filter on the `reason` column; only honored on terminal statuses (`done`/`fail`/`skip`), ignored otherwise. SQL `%`/`_`/`\\` in the substring are matched literally. | free |
 | `GET /w/:ulid/items` | — | SSE stream (see §6.5) | free |
 
 Shared responses: **404** if ULID unknown (`{ error: "not_found", reason: "ulid" }`); **402** if no Legendum account linked; **429** if Legendum charge fails or fifo at capacity (`reason: fifo_full`).
@@ -462,7 +462,7 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 - **Back arrow** → home.
 - **Header**: fifo name + webhook URL **copy** button (same affordance as todos).
 - **Status filter** chips at top: `todo` (default) | `lock` | `done` | `fail` | `skip`. Counts on each chip.
-- **Body**: items in chrono order (oldest first for todo/lock, newest first for done/fail/skip). Each row shows truncated body (tap to expand), position, status pill, age. Fail rows show truncated `fail_reason`; skip rows show truncated `skip_reason`.
+- **Body**: items in chrono order (oldest first for todo/lock, newest first for done/fail/skip). Each row shows truncated body (tap to expand), position, status pill, age. Terminal rows (done/fail/skip) show truncated `reason` when set.
 - **"+"** to push (textarea modal — multi-line OK).
 - No drag, no inline edit, no delete from UI in v1 (queue is queue).
 - **Live updates** via `/w/:ulid/items` SSE.
