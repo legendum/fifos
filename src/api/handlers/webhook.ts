@@ -16,7 +16,7 @@ import {
   type StatusCounts,
   skip,
 } from "../../lib/queue.js";
-import { publish, subscribe } from "../../lib/sse.js";
+import { type PublishType, publish, subscribe } from "../../lib/sse.js";
 import { json } from "../json.js";
 import { notifyFifosChanged } from "./fifos.js";
 
@@ -52,26 +52,27 @@ export async function postPush(req: Request, ulid: string): Promise<Response> {
     return json({ error: "fifo_full", reason: "fifo_full" }, 429);
   }
 
+  const responseBody = {
+    id: result.id,
+    position: result.position,
+    created_at: result.created_at,
+    deduped: result.deduped,
+  };
   if (!result.deduped) {
-    const chargeError = await chargeWebhookWrite(fifo.user_id);
-    if (chargeError) return chargeError;
-    publish(`fifo:${fifo.id}`, "push", {
-      id: result.id,
-      position: result.position,
-      created_at: result.created_at,
-    });
-    notifyFifosChanged(fifo.user_id);
+    return chargePublishNotifyJson(
+      fifo,
+      "push",
+      {
+        id: result.id,
+        position: result.position,
+        created_at: result.created_at,
+      },
+      responseBody,
+      201,
+    );
   }
 
-  return json(
-    {
-      id: result.id,
-      position: result.position,
-      created_at: result.created_at,
-      deduped: result.deduped,
-    },
-    result.deduped ? 200 : 201,
-  );
+  return json(responseBody, 200);
 }
 
 /** POST /w/:ulid/pop — atomically todo→done. */
@@ -81,22 +82,22 @@ export async function postPop(_req: Request, ulid: string): Promise<Response> {
   const row = pop(fifo.id);
   if (!row) return new Response(null, { status: 204 });
 
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", {
-    id: row.id,
-    status: row.status,
-    position: row.position,
-    reason: null,
-  });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({
-    id: row.id,
-    data: row.data,
-    position: row.position,
-    created_at: row.created_at,
-  });
+  return chargePublishNotifyJson(
+    fifo,
+    "change",
+    {
+      id: row.id,
+      status: row.status,
+      position: row.position,
+      reason: null,
+    },
+    {
+      id: row.id,
+      data: row.data,
+      position: row.position,
+      created_at: row.created_at,
+    },
+  );
 }
 
 /** POST /w/:ulid/pull[?lock=<dur>] — atomically todo→lock. */
@@ -110,23 +111,23 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
   const row = pull(fifo.id, parsed);
   if (!row) return new Response(null, { status: 204 });
 
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", {
-    id: row.id,
-    status: row.status,
-    position: row.position,
-    reason: null,
-  });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({
-    id: row.id,
-    data: row.data,
-    position: row.position,
-    created_at: row.created_at,
-    locked_until: row.locked_until,
-  });
+  return chargePublishNotifyJson(
+    fifo,
+    "change",
+    {
+      id: row.id,
+      status: row.status,
+      position: row.position,
+      reason: null,
+    },
+    {
+      id: row.id,
+      data: row.data,
+      position: row.position,
+      created_at: row.created_at,
+      locked_until: row.locked_until,
+    },
+  );
 }
 
 /**
@@ -160,16 +161,26 @@ type FinishVerb = (
 
 type FifoByUlid = NonNullable<ReturnType<typeof getFifoByUlid>>;
 
+/** SSE event kinds emitted by paid fifo webhook mutators (`push` vs item `change`). */
+type FifoWebhookSseType = Extract<PublishType, "push" | "change">;
+
+/**
+ * Debit **0.01 credits on the user’s long-lived Legendum tab** (see
+ * `chargeWebhookWrite`), publish to `fifo:<id>`, refresh the user fifos SSE
+ * snapshot, and return JSON. Every chargeable webhook mutation should end here.
+ */
 async function chargePublishNotifyJson(
   fifo: FifoByUlid,
-  change: Record<string, unknown>,
-  body: Record<string, unknown>,
+  sseType: FifoWebhookSseType,
+  ssePayload: Record<string, unknown>,
+  responseBody: Record<string, unknown>,
+  httpStatus = 200,
 ): Promise<Response> {
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", change);
+  publish(`fifo:${fifo.id}`, sseType, ssePayload);
   notifyFifosChanged(fifo.user_id);
-  return json(body);
+  return json(responseBody, httpStatus);
 }
 
 /** Shared lock → terminal-state handler for done/skip. */
@@ -188,13 +199,13 @@ async function postFinish(
   const row = verb(fifo.id, itemUlid, parsed.reason);
   if (!row) return json({ error: "not_locked" }, 404);
 
-  const change = {
+  const ssePayload = {
     id: row.id,
     status: row.status,
     position: row.position,
     reason: row.reason,
   };
-  return chargePublishNotifyJson(fifo, change, {
+  return chargePublishNotifyJson(fifo, "change", ssePayload, {
     id: row.id,
     status: row.status,
     reason: row.reason,
@@ -229,7 +240,7 @@ export async function postFail(
   };
   if (result.exhausted_retries) changePayload.exhausted_retries = true;
 
-  return chargePublishNotifyJson(fifo, changePayload, {
+  return chargePublishNotifyJson(fifo, "change", changePayload, {
     id: row.id,
     status: row.status,
     reason: row.reason,
@@ -259,17 +270,17 @@ export async function postRetry(
   }
   const row = result.row;
 
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", {
-    id: row.id,
-    status: row.status,
-    position: row.position,
-    reason: null,
-  });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({ id: row.id, status: row.status, position: row.position });
+  return chargePublishNotifyJson(
+    fifo,
+    "change",
+    {
+      id: row.id,
+      status: row.status,
+      position: row.position,
+      reason: null,
+    },
+    { id: row.id, status: row.status, position: row.position },
+  );
 }
 
 function getCounts(fifoId: number): StatusCounts {
