@@ -1,8 +1,10 @@
 # Fifos
 
-**FIFO queues with a CLI, a webhook API, and a mobile-first PWA.** Self-hostable; hosted at [fifos.dev](https://fifos.dev).
+**FIFO queues for AI agents and humans, with a CLI, a webhook API, and a mobile-first PWA.** Self-hostable; hosted at [fifos.dev](https://fifos.dev).
 
 Each queue has its own unguessable webhook URL. Items go through `todo → lock → done | fail | skip`, with at-least-once consumption (`pull` + `done`/`fail`/`skip`), idempotent pushes, server-side retention, and live SSE updates. `fail` is retryable; `skip` is terminal.
+
+Built for jobs an agent might run for minutes: the default `pull` lock is **30 min**, long enough for a Claude/Cursor session to complete a task before the lock expires and the item is reclaimed for someone else to retry.
 
 ## Install
 
@@ -55,7 +57,8 @@ fifos -f http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C info
 | `fifos push "<data>"` | Append an item. Pipe stdin for multi-line bodies. `--key <s>` for idempotent retries (1h dedupe window). |
 | `fifos pop` | Fire-and-forget consume (item → `done`). Exit 1 on empty. |
 | `fifos pop --block [--timeout N]` | Wait via SSE for the next push, then pop. Exit 1 on timeout. |
-| `fifos pull [--lock 5m]` | At-least-once consume (item → `lock`); writes `.fifos-lock` in cwd. Lock TTL clamped to `[10s, 1h]`. |
+| `fifos pull [--lock 1h]` | At-least-once consume (item → `lock`); writes `.fifos-lock` in cwd. Default 30 min, server clamps to `[10s, 1h]`. A second `pull` while `.fifos-lock` exists exits 2 — finalize or delete it first. |
+| `fifos pull --block [--timeout N]` | Wait via SSE for the next push, then pull. Exit 1 on timeout. |
 | `fifos done` | Mark the locked item `done`; clears `.fifos-lock`. |
 | `fifos fail [reason words...]` | Mark it `fail` (retryable); positional args (or stdin) become the diagnostic reason (max 1 KiB). |
 | `fifos skip [reason words...]` | Mark it `skip` (terminal — `retry` refuses); same reason rules as `fail`. |
@@ -73,8 +76,8 @@ fifos -f http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C info
 ### Exit codes
 
 - `0` — success / got an item
-- `1` — empty queue, not found, or `--block --timeout` expired
-- `2` — error (network, invalid usage, server-side rejection)
+- `1` — empty queue, not found, `--block --timeout` expired, or lock TTL expired on `done`/`fail`/`skip` (`.fifos-lock` is auto-cleared — re-`pull`)
+- `2` — error (network, invalid usage, server-side rejection; e.g. no `.fifos-lock` in cwd when finalizing, or a second `pull` while one exists)
 
 ## Webhook API
 
@@ -104,7 +107,7 @@ JSON is the default; append `.yaml` (or `Accept: application/yaml`) for YAML.
   "id": "01HKZ8M3RT9PDXVJ1Q4F2BXY7C",
   "position": 142,
   "status": "fail",
-  "data": "process payment for invoice #4421",
+  "data": "summarize PR #4421 and post review to Linear",
   "locked_until": null,
   "reason": "OOM: ran out of memory",
   "created_at": 1746278400,
@@ -137,11 +140,48 @@ Mobile-first PWA at `/`. Drag to reorder fifos, swipe-left to delete, tap to dri
 
 ## Agent integration
 
-`fifos skill` writes a Claude/Cursor skill file (`config/SKILL.md`) into the relevant skills dir so an agent can use the CLI without prompting. The pattern is:
+`fifos skill` writes a Claude/Cursor skill file (`config/SKILL.md`) into the relevant skills dir so an agent can use the CLI without prompting. Why fifos is a good fit for agent work:
 
-- `pull` work → do it → `done` on success, `fail "<reason>"` for retryable failure, `skip "<reason>"` for malformed/unsupported items (terminal).
-- `list fail --reason <substr>` to triage; `retry <id>` to re-queue. `list skip --reason <substr>` for permanent rejects.
-- `pop --block --timeout 60` for long-poll workers.
+- **30-minute lock window** — long enough for a Claude/Cursor turn (or several) to finish before the queue reclaims the item. Override with `--lock 1h` for genuinely long jobs.
+- **At-least-once delivery** — if the agent crashes or times out, the lock expires and the same item returns to `todo`. No work is silently lost.
+- **Idempotent pushes** — producers can retry with `--key <id>` (1h dedupe window) without spamming the queue.
+- **Triageable terminals** — `fail "OOM at 12k tokens"` / `skip "deprecated job kind v1"` keeps a queryable trail. `list fail --reason oom` finds them later.
+
+A drain-and-exit worker (cron job or single agent session — `pull` exits 1 when the queue is empty, ending the loop; the item body is on stdout):
+
+```bash
+while data=$(fifos pull --lock 30m); do
+  if your-agent "$data"; then
+    fifos done "completed in 2 turns"
+  elif retryable_failure; then
+    fifos fail "rate limited"          # returns to todo via retry
+  else
+    fifos skip "unsupported job kind"  # terminal, won't retry
+  fi
+done
+```
+
+A long-running daemon with at-least-once semantics — `pull --block` waits via SSE for the next push, so no busy-poll:
+
+```bash
+while data=$(fifos pull --block --lock 30m); do
+  if your-agent "$data"; then
+    fifos done
+  else
+    fifos fail "rate limited"
+  fi
+done
+```
+
+For long-poll workers (no busy loop, woken by SSE):
+
+```bash
+while data=$(fifos pop --block --timeout 60); do
+  your-agent "$data" || true   # pop is fire-and-forget; no lock to release
+done
+```
+
+Triage past failures: `fifos list fail` (newest-first), `fifos list fail --reason oom`, then `fifos retry <id>` for the worth-rerunning ones.
 
 ## Docs
 

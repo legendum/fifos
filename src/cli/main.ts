@@ -269,114 +269,133 @@ async function cmdPop(baseUrl: string, parsed: Parsed): Promise<number> {
   const res = await request(baseUrl, "POST", "/pop");
   if (res.status === 204) return 1;
   if (res.status !== 200) dieFromHttp(res);
+  writeItemDataFromResponse(res);
+  return 0;
+}
+
+function writeItemDataFromResponse(res: { body: string }): void {
   const j = parseJSON(res.body) ?? {};
   process.stdout.write(j.data ?? "");
   if (typeof j.data === "string" && !j.data.endsWith("\n")) {
     process.stdout.write("\n");
   }
-  return 0;
 }
 
 async function cmdPopBlock(baseUrl: string, parsed: Parsed): Promise<number> {
-  // Single-pop attempt first — if there's already an item, return immediately.
-  const first = await request(baseUrl, "POST", "/pop");
-  if (first.status === 200) {
-    const j = parseJSON(first.body) ?? {};
-    process.stdout.write(j.data ?? "");
-    if (typeof j.data === "string" && !j.data.endsWith("\n")) {
-      process.stdout.write("\n");
+  return blockUntilItem(baseUrl, parsed, async () => {
+    const r = await request(baseUrl, "POST", "/pop");
+    if (r.status === 200) {
+      writeItemDataFromResponse(r);
+      return "got";
     }
-    return 0;
-  }
-  if (first.status !== 204) dieFromHttp(first);
+    if (r.status === 204) return "empty";
+    dieFromHttp(r);
+  });
+}
+
+/**
+ * Common block-and-retry loop for `pop --block` and `pull --block`. Tries
+ * `attempt` once; if empty, subscribes to SSE and re-attempts on each
+ * `push` event until success, timeout (exit 1), or hard error.
+ */
+async function blockUntilItem(
+  baseUrl: string,
+  parsed: Parsed,
+  attempt: () => Promise<"got" | "empty">,
+): Promise<number> {
+  if ((await attempt()) === "got") return 0;
 
   const timeoutSec = parsed.flags.has("timeout")
     ? Number(parsed.flags.get("timeout"))
     : 0;
-
-  // Subscribe via SSE; on `event: push` re-attempt pop. Reconnect on drop.
-  let lastEventId: string | null = null;
   const start = Date.now();
-
   const remainingMs = () =>
     timeoutSec > 0 ? timeoutSec * 1000 - (Date.now() - start) : Infinity;
 
+  const lastEventId: { current: string | null } = { current: null };
+
   while (true) {
     if (remainingMs() <= 0) return 1;
-
-    const ac = new AbortController();
-    const timer =
-      timeoutSec > 0
-        ? setTimeout(() => ac.abort("timeout"), remainingMs())
-        : null;
-
-    const headers: Record<string, string> = { Accept: "text/event-stream" };
-    if (lastEventId) headers["Last-Event-ID"] = lastEventId;
-
-    let gotPush = false;
-    try {
-      const res = await fetch(`${baseUrl}/items`, {
-        headers,
-        signal: ac.signal,
-      });
-      if (!res.ok || !res.body) {
-        // Server gone — exit on terminal status, retry on network blips.
-        if (res.status === 404)
-          dieFromHttp({
-            status: res.status,
-            body: await res.text(),
-            headers: res.headers,
-          });
-        await sleep(500);
-        continue;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      readLoop: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nlnl = buf.indexOf("\n\n");
-        while (nlnl !== -1) {
-          const block = buf.slice(0, nlnl);
-          buf = buf.slice(nlnl + 2);
-          nlnl = buf.indexOf("\n\n");
-          const evt = parseSSEBlock(block);
-          if (evt.id) lastEventId = evt.id;
-          if (evt.event === "push") {
-            gotPush = true;
-            ac.abort();
-            break readLoop;
-          }
-          // `change`/`resync`/keep-alive — ignore.
-        }
-      }
-    } catch (err: any) {
-      if (err?.name === "AbortError" && !gotPush && timeoutSec > 0) {
-        if (remainingMs() <= 0) return 1;
-      }
-      // fallthrough to retry / pop attempt
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-
-    if (gotPush) {
-      const r = await request(baseUrl, "POST", "/pop");
-      if (r.status === 200) {
-        const j = parseJSON(r.body) ?? {};
-        process.stdout.write(j.data ?? "");
-        if (typeof j.data === "string" && !j.data.endsWith("\n")) {
-          process.stdout.write("\n");
-        }
-        return 0;
-      }
-      // Lost the race (someone else popped) — keep listening.
-      if (r.status !== 204) dieFromHttp(r);
-    }
-    // No event, no error — loop will reconnect using lastEventId.
+    const outcome = await awaitNextPushEvent(baseUrl, remainingMs, lastEventId);
+    if (outcome === "expired") return 1;
+    if (outcome === "reconnect") continue;
+    // got push — try again, then keep listening on a lost race
+    if ((await attempt()) === "got") return 0;
   }
+}
+
+/**
+ * Open one SSE connection to `/items` and resolve with the outcome:
+ *   - "push"      a `push` event was seen (caller should re-attempt the action)
+ *   - "expired"   the wait window elapsed before any push event
+ *   - "reconnect" stream ended/blipped — caller should retry, optionally with
+ *                 the updated `Last-Event-ID`
+ */
+type PushWaitOutcome = "push" | "expired" | "reconnect";
+
+async function awaitNextPushEvent(
+  baseUrl: string,
+  remainingMs: () => number,
+  lastEventId: { current: string | null },
+): Promise<PushWaitOutcome> {
+  const remaining = remainingMs();
+  if (remaining <= 0) return "expired";
+
+  const ac = new AbortController();
+  const timer = Number.isFinite(remaining)
+    ? setTimeout(() => ac.abort("timeout"), remaining)
+    : null;
+
+  const headers: Record<string, string> = { Accept: "text/event-stream" };
+  if (lastEventId.current) headers["Last-Event-ID"] = lastEventId.current;
+
+  let gotPush = false;
+  try {
+    const res = await fetch(`${baseUrl}/items`, {
+      headers,
+      signal: ac.signal,
+    });
+    if (!res.ok || !res.body) {
+      if (res.status === 404) {
+        dieFromHttp({
+          status: res.status,
+          body: await res.text(),
+          headers: res.headers,
+        });
+      }
+      await sleep(500);
+      return "reconnect";
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    readLoop: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nlnl = buf.indexOf("\n\n");
+      while (nlnl !== -1) {
+        const block = buf.slice(0, nlnl);
+        buf = buf.slice(nlnl + 2);
+        nlnl = buf.indexOf("\n\n");
+        const evt = parseSSEBlock(block);
+        if (evt.id) lastEventId.current = evt.id;
+        if (evt.event === "push") {
+          gotPush = true;
+          ac.abort();
+          break readLoop;
+        }
+        // `change`/`resync`/keep-alive — ignore.
+      }
+    }
+  } catch (err: any) {
+    if (err?.name === "AbortError" && !gotPush) {
+      if (remainingMs() <= 0) return "expired";
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return gotPush ? "push" : "reconnect";
 }
 
 function parseSSEBlock(block: string): {
@@ -410,21 +429,44 @@ async function cmdPull(baseUrl: string, parsed: Parsed): Promise<number> {
     );
     return 2;
   }
-  const lock = parsed.flags.get("lock");
-  const path =
-    typeof lock === "string"
-      ? `/pull?lock=${encodeURIComponent(lock)}`
-      : "/pull";
+  if (parsed.flags.has("block")) {
+    return cmdPullBlock(baseUrl, parsed);
+  }
+  const path = pullPath(parsed);
   const res = await request(baseUrl, "POST", path);
   if (res.status === 204) return 1;
   if (res.status !== 200) dieFromHttp(res);
+  writePullResult(res);
+  return 0;
+}
+
+async function cmdPullBlock(baseUrl: string, parsed: Parsed): Promise<number> {
+  const path = pullPath(parsed);
+  return blockUntilItem(baseUrl, parsed, async () => {
+    const r = await request(baseUrl, "POST", path);
+    if (r.status === 200) {
+      writePullResult(r);
+      return "got";
+    }
+    if (r.status === 204) return "empty";
+    dieFromHttp(r);
+  });
+}
+
+function pullPath(parsed: Parsed): string {
+  const lock = parsed.flags.get("lock");
+  return typeof lock === "string"
+    ? `/pull?lock=${encodeURIComponent(lock)}`
+    : "/pull";
+}
+
+function writePullResult(res: { body: string }): void {
   const j = parseJSON(res.body) ?? {};
   writeFileSync(join(process.cwd(), LOCK_FILE), `${j.id}\n`);
   process.stdout.write(j.data ?? "");
   if (typeof j.data === "string" && !j.data.endsWith("\n")) {
     process.stdout.write("\n");
   }
-  return 0;
 }
 
 function readLockFile(): string | null {
@@ -618,6 +660,7 @@ Usage:
   fifos pop                      pop oldest todo item (exit 1 if empty)
   fifos pop --block [--timeout N]  wait via SSE for a push, then pop
   fifos pull [--lock <dur>]      lock + write .fifos-lock (e.g. 600, 5m, 1h)
+  fifos pull --block [--timeout N]  wait via SSE for a push, then pull
   fifos done [reason...]         mark the locked item done; optional one-line reason (positional or stdin, max 1 KiB)
   fifos fail [reason...]         mark it fail (retryable); same reason rules
   fifos skip [reason...]         mark it skip (terminal — retry refused); same reason rules

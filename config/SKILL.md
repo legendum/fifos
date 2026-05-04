@@ -11,6 +11,7 @@ Use the `fifos` CLI to push/pop work items on a FIFO queue.
 - `fifos pop` — fire-and-forget consume (item → done).
 - `fifos pop --block [--timeout 60]` — wait via SSE until something is pushed, then pop. Exits 1 cleanly on timeout.
 - `fifos pull [--lock 1h]` — at-least-once consume (item → lock). Writes `.fifos-lock` in cwd holding the item id; a second `pull` while that file exists exits 2 — finalize or delete it first. Then `fifos done [reason...]` on success, `fifos fail [reason...]` for retryable failure, or `fifos skip [reason...]` for terminal rejection (malformed/unsupported), all from the same cwd. Default lock is 30 min; extend up to 1h if your work needs longer.
+- `fifos pull --block [--timeout 60]` — same as `pop --block` but uses the at-least-once `pull` semantics; ideal for long-running agent daemons.
 - `fifos done [reason...]` — mark the locked item done. Optional one-line reason (positional args or stdin, max 1 KiB) is stored on the item — useful as agent metadata for triage (e.g. `fifos done "cached hit"`, `fifos done "3 turns, 1.2k tokens"`).
 - `fifos fail [reason...]` — fail the locked item (retryable); diagnostic reason stored on the item.
 - `fifos skip [reason...]` — skip the locked item (terminal — `retry` refuses). Use for permanent rejections: malformed payload, unsupported version, deprecated job kind. Same reason rules as `fail`.
