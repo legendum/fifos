@@ -489,7 +489,7 @@ body {
   list-style: none;
   margin: 0;
   overflow: hidden;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border-default);
 }
 .row-slider {
   display: flex;
