@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
-import CheckIcon from "./CheckIcon";
 import CopyIcon from "./CopyIcon";
-import EditTextDialog from "./EditTextDialog";
 import { useKeyboardSafeBottom } from "./useKeyboardSafeBottom";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { usePageTitle } from "./usePageTitle";
@@ -52,6 +50,7 @@ export default function FifoDetail({
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addBarRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const online = useOnlineStatus();
   /** Bumps every minute so "Xm ago" / "Xh ago" labels stay current. */
   const [ageTick, setAgeTick] = useState(0);
@@ -169,6 +168,11 @@ export default function FifoDetail({
     setEditingName(false);
   };
 
+  const cancelEditName = () => {
+    setEditName(fifo.name);
+    setEditingName(false);
+  };
+
   return (
     <div className="screen">
       <div className="fifo-detail-header">
@@ -176,24 +180,50 @@ export default function FifoDetail({
           ◀ Back
         </button>
         <div className="fifo-detail-titles">
-          <button
-            type="button"
-            className="fifo-detail-name"
-            onClick={() => {
-              setEditName(fifo.name);
-              setEditingName(true);
-            }}
-          >
-            {fifo.name}
-          </button>
+          {editingName ? (
+            <input
+              ref={nameInputRef}
+              type="text"
+              className="fifo-detail-name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={saveRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLInputElement).blur();
+                } else if (e.key === "Escape") {
+                  cancelEditName();
+                  nameInputRef.current?.blur();
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <button
+              type="button"
+              className="fifo-detail-name"
+              title="Click to rename fifo"
+              onClick={() => {
+                setEditName(fifo.name);
+                setEditingName(true);
+              }}
+            >
+              {fifo.name}
+            </button>
+          )}
           <button
             type="button"
             className="fifo-webhook-copy"
             onClick={copyWebhookUrl}
-            title={copied ? "Copied" : "Copy webhook URL"}
+            title={copied ? "Copied to clipboard" : "Click to copy webhook URL"}
           >
             <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
-            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? (
+              <span className="copied-badge">Copied!</span>
+            ) : (
+              <CopyIcon />
+            )}
           </button>
         </div>
       </div>
@@ -331,17 +361,6 @@ export default function FifoDetail({
             </div>
           </div>
         </div>
-      )}
-
-      {editingName && (
-        <EditTextDialog
-          title="Rename fifo"
-          placeholder="Fifo name"
-          text={editName}
-          onChange={setEditName}
-          onSave={saveRename}
-          onClose={() => setEditingName(false)}
-        />
       )}
     </div>
   );

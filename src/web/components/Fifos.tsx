@@ -30,22 +30,20 @@ type Props = {
   visible: boolean;
 };
 
-async function patchFifoName(
+async function patchFifo(
   slug: string,
-  name: string,
-): Promise<{ slug: string; name: string } | null> {
+  body: { name?: string; max_retries?: number },
+): Promise<boolean> {
   try {
     const res = await fetch(`/${slug}`, {
       method: "PATCH",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { slug: string; name: string };
-    return data;
+    return res.ok;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -62,6 +60,8 @@ export default function Fifos({
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [renameFifo, setRenameFifo] = useState<FifoEntry | null>(null);
   const [renameText, setRenameText] = useState("");
+  const [renameMaxRetries, setRenameMaxRetries] = useState(1);
+  const [deleteFifo, setDeleteFifo] = useState<FifoEntry | null>(null);
 
   const filterTrim = filterQuery.trim().toLowerCase();
   const filteredFifos = useMemo(() => {
@@ -147,25 +147,36 @@ export default function Fifos({
     window.dispatchEvent(new Event("fifos-credits-refresh"));
   };
 
-  const handleDelete = async (slug: string) => {
-    await fetch(`/${slug}`, { method: "DELETE", credentials: "include" });
+  const confirmDelete = async () => {
+    if (!deleteFifo) return;
+    await fetch(`/${deleteFifo.slug}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    setDeleteFifo(null);
     await fetchFifos();
   };
 
   const openRename = (entry: FifoEntry) => {
     setRenameFifo(entry);
     setRenameText(entry.name);
+    setRenameMaxRetries(entry.max_retries);
   };
 
   const saveRename = async () => {
     if (!renameFifo) return;
     const trimmed = renameText.trim();
-    if (!trimmed || trimmed === renameFifo.name) {
+    const nameChanged = trimmed.length > 0 && trimmed !== renameFifo.name;
+    const retriesChanged = renameMaxRetries !== renameFifo.max_retries;
+    if (!nameChanged && !retriesChanged) {
       setRenameFifo(null);
       return;
     }
-    const data = await patchFifoName(renameFifo.slug, trimmed);
-    if (data) {
+    const body: { name?: string; max_retries?: number } = {};
+    if (nameChanged) body.name = trimmed;
+    if (retriesChanged) body.max_retries = renameMaxRetries;
+    const ok = await patchFifo(renameFifo.slug, body);
+    if (ok) {
       setRenameFifo(null);
       await fetchFifos();
     }
@@ -212,7 +223,7 @@ export default function Fifos({
               entry={entry}
               onSelect={() => onSelect(entry)}
               onEdit={() => openRename(entry)}
-              onDelete={() => handleDelete(entry.slug)}
+              onDelete={() => setDeleteFifo(entry)}
             />
           ))}
         </ul>
@@ -233,7 +244,7 @@ export default function Fifos({
                   entry={entry}
                   onSelect={() => onSelect(entry)}
                   onEdit={() => openRename(entry)}
-                  onDelete={() => handleDelete(entry.slug)}
+                  onDelete={() => setDeleteFifo(entry)}
                 />
               ))}
             </ul>
@@ -312,13 +323,67 @@ export default function Fifos({
 
       {renameFifo && (
         <EditTextDialog
-          title="Rename fifo"
+          title="Edit fifo"
           placeholder="Fifo name"
           text={renameText}
           onChange={setRenameText}
+          counter={{
+            label: "Max retries",
+            value: renameMaxRetries,
+            min: 1,
+            max: 10,
+            onChange: setRenameMaxRetries,
+          }}
           onSave={saveRename}
           onClose={() => setRenameFifo(null)}
         />
+      )}
+
+      {deleteFifo && (
+        <div
+          className="dialog-overlay"
+          onClick={() => setDeleteFifo(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setDeleteFifo(null);
+          }}
+        >
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 style={{ margin: 0, fontSize: 18 }}>Delete fifo?</h2>
+              <button
+                type="button"
+                className="dialog-close"
+                onClick={() => setDeleteFifo(null)}
+              >
+                &times;
+              </button>
+            </div>
+            <div className="dialog-body">
+              <p style={{ margin: "0 0 16px" }}>
+                Permanently delete <strong>{deleteFifo.name}</strong> and all
+                its items?
+              </p>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setDeleteFifo(null)}
+                >
+                  No
+                </button>
+                <button type="button" className="btn" onClick={confirmDelete}>
+                  Yes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -335,12 +400,24 @@ function CountsPill({
     skip: number;
   };
 }) {
+  const cells: Array<{ letter: string; label: string; value: number }> = [
+    { letter: "T", label: "todo", value: counts.todo },
+    { letter: "L", label: "lock", value: counts.lock },
+    { letter: "D", label: "done", value: counts.done },
+    { letter: "F", label: "fail", value: counts.fail },
+    { letter: "S", label: "skip", value: counts.skip },
+  ];
   return (
     <span
       className="cat-count"
-      title={`todo ${counts.todo} · lock ${counts.lock} · done ${counts.done} · fail ${counts.fail} · skip ${counts.skip}`}
+      title={cells.map((c) => `${c.label} ${c.value}`).join(" · ")}
     >
-      {counts.todo}·{counts.lock}·{counts.done} {counts.fail}·{counts.skip}
+      {cells.map((c) => (
+        <span className="cat-count-cell" key={c.letter}>
+          <span className="cat-count-letter">{c.letter}</span>
+          <span className="cat-count-value">{c.value}</span>
+        </span>
+      ))}
     </span>
   );
 }
