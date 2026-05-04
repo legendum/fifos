@@ -5,6 +5,7 @@ import { FIFOS_PURGE_INTERVAL_SECONDS, PORT } from "../lib/constants.js";
 import { getDb } from "../lib/db.js";
 import { isSelfHosted, LOCAL_USER_EMAIL } from "../lib/mode.js";
 import { sweepRetention } from "../lib/purge.js";
+import { seedDefaultFifosForNewUser } from "../lib/seed-default-fifos.js";
 import { requireAuthAsync } from "./auth-middleware.js";
 import * as authHandlers from "./handlers/auth.js";
 import * as fifosHandlers from "./handlers/fifos.js";
@@ -128,6 +129,10 @@ const legendumMiddleware = legendumSdk.isConfigured()
             email,
             accountToken,
           );
+          const created = db
+            .query("SELECT id FROM users WHERE email = ?")
+            .get(email) as { id: number };
+          seedDefaultFifosForNewUser(created.id);
         } else {
           db.run(
             "UPDATE users SET legendum_token = ? WHERE id = ?",
@@ -232,6 +237,13 @@ export default {
       if (path === "/fifos-512.png") {
         return serveStatic(join(root, "public/fifos-512.png"), "image/png");
       }
+      if (path === "/install.sh") {
+        return serveStatic(
+          join(root, "public/install.sh"),
+          "text/plain",
+          "no-cache",
+        );
+      }
       if (path === "/dist/sw.js") {
         return serveStatic(
           join(root, "public/dist/sw.js"),
@@ -308,6 +320,7 @@ export default {
         user = db.query("SELECT id FROM users LIMIT 1").get() as {
           id: number;
         };
+        seedDefaultFifosForNewUser(user.id);
       }
       userId = user.id;
     } else {

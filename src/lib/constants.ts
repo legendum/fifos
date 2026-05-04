@@ -30,6 +30,10 @@ export const MAX_ITEMS_PER_FIFO = Number(
 
 export const MAX_ITEM_BYTES = Number(process.env.FIFOS_MAX_ITEM_BYTES || 65536);
 
-export const MAX_FIFOS_PER_USER = Number(
-  process.env.FIFOS_MAX_FIFOS_PER_USER || 50,
-);
+/** Per-user fifo cap (`FIFOS_MAX_FIFOS_PER_USER`, default 50). Starter fifos count toward this. Read per call so `bun test` can change env after other suites loaded `constants.ts`. */
+export function maxFifosPerUser(): number {
+  const raw = process.env.FIFOS_MAX_FIFOS_PER_USER;
+  if (raw === undefined || raw === "") return 50;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 50;
+}

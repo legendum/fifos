@@ -2,8 +2,8 @@ import { chargeFifoCreate } from "../../lib/billing.js";
 import {
   DEFAULT_FIFO_MAX_RETRIES,
   MAX_FIFO_MAX_RETRIES,
-  MAX_FIFOS_PER_USER,
   MIN_FIFO_MAX_RETRIES,
+  maxFifosPerUser,
 } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { toSlug, validateFifoName } from "../../lib/fifos.js";
@@ -165,11 +165,12 @@ export async function createFifo(
   const countRow = db
     .query("SELECT COUNT(*) AS n FROM fifos WHERE user_id = ?")
     .get(userId) as { n: number };
-  if (countRow.n >= MAX_FIFOS_PER_USER) {
+  // Includes starter fifo from seedDefaultFifosForNewUser, if any.
+  if (countRow.n >= maxFifosPerUser()) {
     return json(
       {
         error: "forbidden",
-        message: `Fifo limit reached (${MAX_FIFOS_PER_USER} per account)`,
+        message: `Fifo limit reached (${maxFifosPerUser()} per account)`,
       },
       403,
     );

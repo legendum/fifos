@@ -11,7 +11,7 @@ beforeAll(async () => {
   // Match queue.test.ts so the constants module sees the same values
   // regardless of which file initializes it first (bun:test shares the process).
   process.env.FIFOS_DB_PATH = TEST_DB_PATH;
-  process.env.FIFOS_MAX_FIFOS_PER_USER = "3";
+  process.env.FIFOS_MAX_FIFOS_PER_USER = "4";
   process.env.FIFOS_MAX_ITEMS_PER_FIFO = "5";
   delete process.env.LEGENDUM_API_KEY;
   delete process.env.LEGENDUM_SECRET;
@@ -75,6 +75,16 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.legendum_linked).toBe(false);
   });
 
+  test("starter fifo is seeded for the local user", async () => {
+    const { status, body } = await jget("/");
+    expect(status).toBe(200);
+    expect(body.fifos.length).toBe(1);
+    expect(body.fifos[0].slug).toBe("my-first-fifo");
+    expect(body.fifos[0].name).toBe("My first FIFO");
+    expect(body.fifos[0].position).toBe(0);
+    expect(body.fifos[0].counts.todo).toBe(1);
+  });
+
   test("POST / creates a fifo with slug, ulid, webhook_url, position", async () => {
     const { status, body } = await jpost("/", { name: "builds" });
     expect(status).toBe(201);
@@ -83,7 +93,7 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.ulid).toMatch(/^[0-9A-Z]+$/);
     expect(body.ulid.length).toBeGreaterThanOrEqual(20);
     expect(body.webhook_url).toBe(`/w/${body.ulid}`);
-    expect(body.position).toBe(0);
+    expect(body.position).toBe(1);
     expect(body.max_retries).toBe(3);
   });
 
@@ -117,19 +127,22 @@ describe("Fifos CRUD — self-hosted", () => {
     const { status, body } = await jget("/");
     expect(status).toBe(200);
     expect(Array.isArray(body.fifos)).toBe(true);
-    expect(body.fifos.length).toBe(2);
-    expect(body.fifos[0].slug).toBe("builds");
+    expect(body.fifos.length).toBe(3);
+    expect(body.fifos[0].slug).toBe("my-first-fifo");
     expect(body.fifos[0].position).toBe(0);
-    expect(body.fifos[0].max_retries).toBe(3);
-    expect(body.fifos[0].counts).toEqual({
+    expect(body.fifos[0].counts.todo).toBe(1);
+    expect(body.fifos[1].slug).toBe("builds");
+    expect(body.fifos[1].position).toBe(1);
+    expect(body.fifos[1].max_retries).toBe(3);
+    expect(body.fifos[1].counts).toEqual({
       todo: 0,
       lock: 0,
       done: 0,
       fail: 0,
       skip: 0,
     });
-    expect(body.fifos[1].slug).toBe("my-deploy-queue");
-    expect(body.fifos[1].position).toBe(1);
+    expect(body.fifos[2].slug).toBe("my-deploy-queue");
+    expect(body.fifos[2].position).toBe(2);
   });
 
   test("GET /:slug returns JSON detail with empty items", async () => {
@@ -208,10 +221,10 @@ describe("Fifos CRUD — self-hosted", () => {
 
   test("PATCH /f/reorder writes positions in the given order", async () => {
     const before = await jget("/");
-    expect(before.body.fifos[0].slug).toBe("builds-ci");
+    expect(before.body.fifos[0].slug).toBe("my-first-fifo");
 
     const { status, body } = await jpatch("/f/reorder", {
-      order: ["my-deploy-queue", "builds-ci"],
+      order: ["my-deploy-queue", "builds-ci", "my-first-fifo"],
     });
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
@@ -221,10 +234,13 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(after.body.fifos[0].position).toBe(0);
     expect(after.body.fifos[1].slug).toBe("builds-ci");
     expect(after.body.fifos[1].position).toBe(1);
+    expect(after.body.fifos[2].slug).toBe("my-first-fifo");
+    expect(after.body.fifos[2].position).toBe(2);
   });
 
   test("MAX_FIFOS_PER_USER cap returns 403", async () => {
-    // Cap is 3; we already have 2. Next one fills, the one after is rejected.
+    // Cap is 4; we have seed + builds-ci + my-deploy-queue = 3. Next creates
+    // the 4th; the following hits the cap.
     const r1 = await jpost("/", { name: "third" });
     expect(r1.status).toBe(201);
     const r2 = await jpost("/", { name: "fourth" });

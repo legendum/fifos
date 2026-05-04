@@ -4,6 +4,7 @@ import {
   setAuthCookieHeader,
 } from "../../lib/auth.js";
 import { getDb } from "../../lib/db.js";
+import { seedDefaultFifosForNewUser } from "../../lib/seed-default-fifos.js";
 import { json } from "../json.js";
 
 // @ts-expect-error — pure JS SDK
@@ -92,6 +93,7 @@ export async function getCallback(req: Request): Promise<Response> {
     user = db.query("SELECT id FROM users WHERE email = ?").get(email) as {
       id: number;
     };
+    seedDefaultFifosForNewUser(user.id);
   } else if (serviceToken) {
     db.run(
       "UPDATE users SET legendum_token = ? WHERE id = ?",

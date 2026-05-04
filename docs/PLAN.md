@@ -4,6 +4,8 @@ Build order derived from `SPEC.md`. Each phase ends in something runnable and te
 
 The `../todos` repo is the working template — when a phase says "copy from todos", port it verbatim and rename `todos`→`fifos`, `lists`→`fifos`, `/t/`→`/f/`. Skip todos-specific bits (markdown, undo/redo, `text` blob).
 
+**Implementation status:** Phases **0–14** are satisfied in-tree. Use **`docs/SPEC.md` § Checklist (implementation)** as the live feature checklist; this PLAN stays the **build order / onboarding** narrative.
+
 ---
 
 ## Phase 0 — Repo bootstrap
@@ -282,7 +284,9 @@ Order of work inside the file:
    - Plain text by default (one item body per line for pop; pretty key:value for info).
    - `--json` and `--yaml` switch on `info`/`peek`/`list`.
 
-**Done when:** in a fresh project, `bun link` then `fifos push hello && fifos pop` round-trips. `fifos pull` writes `.fifos-lock`; `fifos done` clears it. `fifos pop --block --timeout 10` blocks then exits 1.
+8. **`public/install.sh`** — same pattern as todos: POSIX `sh`, ensure Bun (`curl` bun installer), clone/update **`~/.config/fifos/src`** from the canonical GitHub URL, `bun install`, `bun link`. Served at **`GET /install.sh`** from Bun (`server.ts`) for dev; production nginx **`location = /install.sh`** → `alias` the file (`config/nginx.conf`). Web install dialog copies the curl one-liner (SPEC §2.4, §6.6).
+
+**Done when:** in a fresh project, `bun link` then `fifos push hello && fifos pop` round-trips. `fifos pull` writes `.fifos-lock`; `fifos done` clears it. `fifos pop --block --timeout 10` blocks then exits 1. **`curl -fsSL http://localhost:3000/install.sh | sh`** (after `bun run dev`) yields a working global `fifos` against a fresh clone dir (smoke test optional).
 
 ---
 
@@ -296,7 +300,7 @@ Screens:
 
 1. **Login** — same as todos (Legendum redirect).
 2. **Fifos home** (§10.1):
-   - Top bar: logo (click → install dialog with CLI install instructions), Legendum link/unlink widget.
+   - Top bar: logo (click → install dialog: **`curl -fsSL https://fifos.dev/install.sh | sh`** plus manual install per README / SPEC §2.4), Legendum link/unlink widget.
    - List of fifos from `GET /`, ordered by position. Subscribe to `GET /f/fifos/items` for live updates.
    - Drag-and-drop with `@dnd-kit` (port the todos pattern). On drag-end, `PATCH /f/reorder` with the new slug order.
    - `+` button → name prompt → `POST /`.
@@ -390,6 +394,8 @@ Tests in `tests/` (port the todos test harness):
 - `tests/purge.test.ts` — time-based retention sweep; idempotency-row sweep (>1h); pressure purge ordering (done before fail); pressure purge does not touch `todo` or `lock`.
 
 `bun run smoke` = lint + test + build (matches todos).
+
+**Deploy note:** sync **`public/install.sh`** to the server; nginx must include **`location = /install.sh`** (see `config/nginx.conf`, SPEC §6.6).
 
 **Done when:** `bun run smoke` is green.
 

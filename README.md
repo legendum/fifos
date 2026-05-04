@@ -6,8 +6,18 @@ Each queue has its own unguessable webhook URL. Items go through `todo → lock 
 
 ## Install
 
+### One-liner (from [fifos.dev](https://fifos.dev))
+
 ```bash
-git clone <repo-url> fifos
+curl -fsSL https://fifos.dev/install.sh | sh
+```
+
+Installs under `~/.config/fifos/src`, runs `bun install` and `bun link` (same pattern as [todos.in](https://todos.in/install.sh)).
+
+### From source
+
+```bash
+git clone https://github.com/legendum/fifos.git fifos
 cd fifos
 bun install
 bun link            # makes the `fifos` CLI globally available

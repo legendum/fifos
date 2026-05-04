@@ -31,9 +31,11 @@ Identical to todos. Login + service link in one Legendum flow; encrypted session
 
 No passwords. The user's **email** is the stable identity.
 
+On **first user creation** (Legendum OAuth callback, Legendum link-key path that inserts a new `users` row, or self-hosted bootstrap of the single local user), the server runs **`seedDefaultFifosForNewUser`** (`src/lib/seed-default-fifos.ts`): one fifo named **"My first FIFO"** (slug `my-first-fifo`, default `max_retries`) plus a single welcome **`todo`** item so the dashboard and webhook are usable immediately — same onboarding idea as todos' seeded lists. **No Legendum fifo-create charge** for this row (it is **not** created through `POST /`). The starter fifo **counts toward `FIFOS_MAX_FIFOS_PER_USER`** like any other fifo row.
+
 ### 2.2 Fifos (queues)
 
-1. **Dashboard** (after login): list of fifos. "Create fifo" → user enters a name → server generates a unique ULID for the webhook URL.
+1. **Dashboard** (after login): list of fifos — a **new account** already includes **My first FIFO** from the seed above; **Create fifo** still adds a named fifo and a new webhook ULID per §6.2.
 2. **Web URL**: `fifos.dev/<slug>` — authenticated, session-based. Slug is unique per user. Reserved names: `f`, `w` (rejected on create).
 3. **Webhook URL**: `fifos.dev/w/<ulid>` — public, no auth. For agents and scripts.
 4. **Each fifo** contains an ordered set of items.
@@ -127,7 +129,12 @@ fifos -f "$FIFOS_DEPLOYS" pull
 
 This lets shell scripts branch reliably: `if data=$(fifos pop); then ...; elif [ $? -eq 1 ]; then sleep 1; else exit 2; fi`.
 
-**Install**: `bun link` in the repo makes `fifos` available globally (via `bin` in package.json → `src/cli/main.ts`).
+**Install** (same pattern as [todos.in](https://todos.in)):
+
+- **One-liner** (hosted): `curl -fsSL https://fifos.dev/install.sh | sh` — ensures Bun is installed, clones or updates **`~/.config/fifos/src`** from the GitHub repo, runs `bun install` and `bun link`.
+- **From source**: clone the repo, `bun install`, **`bun link`** — makes `fifos` available globally (`bin` in `package.json` → `src/cli/main.ts`).
+
+Script source: `public/install.sh`. **Production**: nginx serves `GET /install.sh` from disk (`config/nginx.conf`). **`bun run dev` / `start`**: Bun serves the same path for local testing.
 
 ### 2.5 Local lock file (`.fifos-lock`)
 
@@ -198,12 +205,15 @@ src/
   web/
     App.tsx
     entry.tsx
+    manifest.json       # linked as GET /manifest.json; precached by build (see §11)
+    main.css
     components/
   cli/
     main.ts
   lib/
     constants.ts        # server + re-exports web_constants (uses process.env)
     web_constants.ts    # browser-safe literals — import from here in `src/web/`
+    seed-default-fifos.ts  # starter fifo + welcome todo on new user (see §2.1)
     mode.ts
     db.ts
     queue.ts            # push/pop/pull/done/fail/skip/retry core (single-file SQL)
@@ -214,9 +224,9 @@ src/
     billing.ts
     ulid.ts
 public/
+  install.sh            # CLI one-liner: curl … | sh (see §2.4); nginx + Bun GET /install.sh
   fifos-192.png         # PWA icon
   fifos-512.png         # PWA icon (also maskable)
-  manifest.webmanifest
 config/
   schema.sql
   SKILL.md
@@ -370,7 +380,13 @@ data: {}
 
 In dev (`bun run --hot`) restarts drop all open EventSources until refresh.
 
-### 6.6 Errors
+### 6.6 CLI install script
+
+| Route | Description |
+|---|---|
+| `GET /install.sh` | Plain-text shell script: installs Bun if missing, clone/update `~/.config/fifos/src`, `bun install`, `bun link`. The web UI install dialog copies `curl -fsSL https://fifos.dev/install.sh \| sh`. **Production:** nginx `alias` to `public/install.sh` (`config/nginx.conf`). **Dev:** Bun static handler serves the same file. |
+
+### 6.7 Errors
 
 Same shape as todos: `{ "error": "<code>", "reason": "<detail>" }` for 4xx. Codes used:
 
@@ -394,7 +410,8 @@ Identical mechanism to todos. Different rates.
 
 | Action | Cost |
 |---|---|
-| Fifo creation | 2 credits |
+| Fifo creation (`POST /`) | 2 credits |
+| **Starter fifo** + welcome item (§2.1 seed — not `POST /`) | **Free** |
 | Webhook write (push, pop, pull, done, fail, skip, retry) | **0.01** credits |
 | Idempotent push (key already seen within 1h) | Free — returns the original ULID (`id` in JSON) |
 | Webhook read (peek, info, list, items) | Free |
@@ -474,7 +491,7 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 
 Same as todos: `workbox-build` `generateSW()`, `cacheId` from `package.json` version, content-hashed bundles, clean dist on build, `updateViaCache: "none"`, page reload on `controllerchange`. No FCM.
 
-`public/manifest.webmanifest` declares name `Fifos`, `start_url: "/"`, `display: "standalone"`, and the two icons (`fifos-192.png` `192x192`, `fifos-512.png` `512x512` with `purpose: "any maskable"`).
+**Manifest:** `src/web/manifest.json` is served at **`GET /manifest.json`** (see `server.ts`). The shell links it as `/manifest.json`. `scripts/build.ts` adds it (with `/main.css` and icons) to the service worker precache manifest. Declares name `Fifos`, `start_url: "/"`, `display: "standalone"`, and the two icons (`fifos-192.png` `192x192`, `fifos-512.png` `512x512` with `purpose: "any maskable"` — files live under `public/`).
 
 ---
 
@@ -505,16 +522,18 @@ Same as todos: `workbox-build` `generateSW()`, `cacheId` from `package.json` ver
 
 ## Checklist (implementation)
 
-- [ ] **DB**: `data/fifos.db` from `config/schema.sql` — `users`, `fifos`, `items`, `idempotency`. Indexes per §3.1. `PRAGMA foreign_keys = ON` issued on every connection so `ON DELETE CASCADE` actually fires.
-- [ ] **Auth & Legendum**: login/callback/logout, middleware, link/unlink widget, auto-logout on unlink.
-- [ ] **Fifos API**: `GET/POST/PATCH/DELETE` per §6.2 + `PATCH /f/reorder`. Slug uniqueness per user. Reserved names.
-- [ ] **Webhook API**: push (with `Idempotency-Key`), pop, pull, done, fail, skip, retry, status, peek, info, list, items per §6.3. Lock reclaim in pop/pull tx. Capacity-pressure purge on push.
-- [ ] **SSE**: `/w/:ulid/items` and `/f/fifos/items` with ring-buffer + `Last-Event-ID` replay + `resync` fallback (§6.5). 25s keep-alives.
-- [ ] **Purger**: time-based sweep on 1h interval (§5.1). Batched 100 deletes.
-- [ ] **Billing**: Legendum tabs — 2 cr per fifo create, 0.01 per webhook write, 2-cr threshold. No billing in self-hosted.
-- [ ] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <ulid>`, `retry <ulid>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid|url>` flag. Documented exit codes 0/1/2.
-- [ ] **Frontend — layout**: top bar, install dialog, mobile-first.
-- [ ] **Frontend — screens**: login, fifos home (drag to reorder via `PATCH /f/reorder`, swipe-delete), fifo detail (status filter, no item drag).
-- [ ] **Frontend — live**: subscribe to `/w/:ulid/items` on detail; `/f/fifos/items` on home.
-- [ ] **PWA**: workbox `generateSW()`, version-based cacheId, content-hashed bundles.
-- [ ] **Agent skill**: `fifos skill` copies `config/SKILL.md` to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`.
+All items reflect the **current in-tree implementation** (`tests/`, `bun run smoke`).
+
+- [x] **DB**: `data/fifos.db` from `config/schema.sql` — `users`, `fifos`, `items`, `idempotency`. Indexes per §3.1. `PRAGMA foreign_keys = ON` issued on every connection so `ON DELETE CASCADE` actually fires.
+- [x] **Auth & Legendum**: login/callback/logout, middleware, link/unlink widget, auto-logout on unlink.
+- [x] **Fifos API**: `GET/POST/PATCH/DELETE` per §6.2 + `PATCH /f/reorder`. Slug uniqueness per user. Reserved names.
+- [x] **Webhook API**: push (with `Idempotency-Key`), pop, pull, done, fail, skip, retry, status, peek, info, list, items per §6.3. Lock reclaim in pop/pull tx. Capacity-pressure purge on push.
+- [x] **SSE**: `/w/:ulid/items` and `/f/fifos/items` with ring-buffer + `Last-Event-ID` replay + `resync` fallback (§6.5). 25s keep-alives.
+- [x] **Purger**: time-based sweep on 1h interval (§5.1). Batched 100 deletes.
+- [x] **Billing**: Legendum tabs — 2 cr per fifo create, 0.01 per webhook write, 2-cr threshold. No billing in self-hosted.
+- [x] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <ulid>`, `retry <ulid>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid|url>` flag. Documented exit codes 0/1/2. **`public/install.sh`** + `GET /install.sh` (nginx + Bun) + install dialog one-liner (§2.4, §6.6).
+- [x] **Frontend — layout**: top bar, install dialog, mobile-first.
+- [x] **Frontend — screens**: login, fifos home (drag to reorder via `PATCH /f/reorder`, swipe-delete), fifo detail (status filter, no item drag).
+- [x] **Frontend — live**: subscribe to `/w/:ulid/items` on detail; `/f/fifos/items` on home.
+- [x] **PWA**: workbox `generateSW()`, version-based cacheId, content-hashed bundles.
+- [x] **Agent skill**: `fifos skill` copies `config/SKILL.md` to `~/.claude/skills/fifos/` and `~/.cursor/skills/fifos/`.
