@@ -25,6 +25,7 @@ import {
 import type { FifoEntry } from "../types";
 import DragHandle from "./DragHandle";
 import EditTextDialog from "./EditTextDialog";
+import ThemeChooser from "./ThemeChooser";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { useSwipeToReveal } from "./useSwipeToReveal";
 
@@ -232,7 +233,7 @@ export default function Fifos({
     : null;
 
   return (
-    <div className="screen">
+    <div className="screen screen--home">
       {filterActive ? (
         <ul className="list">
           {filteredFifos.map((entry) => (
@@ -326,6 +327,11 @@ export default function Fifos({
           </div>
         </div>
       )}
+
+      <div className="links-list-theme links-list-theme--home">
+        <p className="links-list-theme-label">Appearance</p>
+        <ThemeChooser />
+      </div>
 
       {!creating && (
         <button type="button" className="fab" onClick={() => setCreating(true)}>

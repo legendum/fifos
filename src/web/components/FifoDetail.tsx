@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
 import CopyIcon from "./CopyIcon";
-import ThemeChooser from "./ThemeChooser";
 import { useKeyboardSafeBottom } from "./useKeyboardSafeBottom";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { usePageTitle } from "./usePageTitle";
@@ -341,11 +340,6 @@ export default function FifoDetail({
                 : `No ${status} items.`}
           </p>
         )}
-
-        <div className="links-list-theme">
-          <p className="links-list-theme-label">Appearance</p>
-          <ThemeChooser />
-        </div>
       </div>
 
       {pushing ? (

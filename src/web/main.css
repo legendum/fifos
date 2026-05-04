@@ -560,6 +560,10 @@ body {
 .screen {
   padding-bottom: 24px;
 }
+/* Home list: room above Appearance + clearance for fixed FAB over last rows */
+.screen--home {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+}
 .screen--detail {
   display: flex;
   flex-direction: column;
@@ -630,6 +634,10 @@ body {
   background: var(--bg-surface);
   color: var(--text-primary);
   box-shadow: 0 1px 3px var(--shadow-sm);
+}
+.links-list-theme--home {
+  border-top: none;
+  margin-top: 16px;
 }
 
 .screen-header {
