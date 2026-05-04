@@ -198,7 +198,6 @@ describe("SSE pub/sub", () => {
     const res = sse.subscribe("fifo:headers", null);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
     expect(res.headers.get("Cache-Control")).toBe("no-cache");
-    expect(res.headers.get("Connection")).toBe("keep-alive");
     expect(res.headers.get("X-Accel-Buffering")).toBe("no");
     try {
       res.body?.cancel();

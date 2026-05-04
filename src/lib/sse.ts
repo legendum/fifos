@@ -17,7 +17,7 @@
  */
 
 const RING_MAX = 200;
-const KEEP_ALIVE_MS = 25_000;
+const KEEP_ALIVE_MS = 8_000;
 const COALESCE_MS = 250;
 
 let counter = 0;

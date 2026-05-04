@@ -442,15 +442,8 @@ export function getStatus(
 
 /** GET /w/:ulid/items — SSE per-fifo stream. */
 export function getItems(req: Request, ulid: string): Response {
-  console.log("[sse] getItems enter", ulid);
   const fifo = getFifoByUlid(ulid);
-  if (!fifo) {
-    console.log("[sse] getItems no fifo for ulid", ulid);
-    return notFoundUlid();
-  }
+  if (!fifo) return notFoundUlid();
   const lastEventId = req.headers.get("Last-Event-ID");
-  console.log("[sse] getItems subscribing", { fifoId: fifo.id, lastEventId });
-  const res = subscribe(`fifo:${fifo.id}`, lastEventId, { signal: req.signal });
-  console.log("[sse] getItems returning Response");
-  return res;
+  return subscribe(`fifo:${fifo.id}`, lastEventId, { signal: req.signal });
 }

@@ -192,6 +192,8 @@ async function routeWebhook(
 export default {
   port: PORT,
   development: !!process.env.DEV,
+  // SSE streams must outlive Bun's default 10s idle timeout. 255 is the max.
+  idleTimeout: 255,
   routes: {
     ...(legendumSdk.isConfigured()
       ? {
