@@ -43,11 +43,10 @@ The CLI is stateless. Each project's queue is configured via `FIFOS_WEBHOOK` in 
 FIFOS_WEBHOOK=http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C
 ```
 
-First-run prompts for it interactively if missing. Override per-call with `-f <ulid|url>`:
+First-run prompts for it interactively if missing (that saves the canonical webhook URL to `.env`). Override per-call with `-f <ulid>` (`FIFOS_DOMAIN` selects the host, default `https://fifos.dev`):
 
 ```bash
 fifos -f 01HKZ8M3RT9PDXVJ1Q4F2BXY7C push "hello"
-fifos -f http://localhost:3000/w/01HKZ8M3RT9PDXVJ1Q4F2BXY7C info
 ```
 
 ## CLI verbs

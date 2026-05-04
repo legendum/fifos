@@ -158,9 +158,28 @@ describe("CLI exit codes", () => {
     expect(r.stderr).toContain("Unknown command");
   });
 
-  test("network error against bad URL: exit 2", async () => {
+  test("-f with a URL is rejected: exit 2", async () => {
     const r = await runCli(["info", "-f", "http://127.0.0.1:1/nope"]);
     expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("invalid fifo ULID");
+  });
+
+  test("network error when host refuses connection: exit 2", async () => {
+    const proc = Bun.spawn(
+      ["bun", "run", cliEntry, "-f", fifoUlid, "info"],
+      {
+        cwd: workDir,
+        env: {
+          ...process.env,
+          FIFOS_DOMAIN: "http://127.0.0.1:1",
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(2);
   });
 });
 

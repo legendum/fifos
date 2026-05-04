@@ -262,7 +262,7 @@ File: `src/cli/main.ts`. Single-file argv parser (no commander/yargs — todos d
 
 Order of work inside the file:
 
-1. **Bootstrap & config**: load `.env`; resolve webhook URL via `-f <ulid|url>` → `FIFOS_WEBHOOK` → first-run TTY prompt. Implement the URL canonicalization (bare ULID → `${FIFOS_DOMAIN:-https://fifos.dev}/w/<ulid>`). Default subcommand (`fifos` with no args) is `info` — but on first run, when no webhook is resolved, prompt the user, save to `.env`, then run `info`. Non-TTY (no stdin attached): exit 2 with the "FIFOS_WEBHOOK not set" message instead of prompting.
+1. **Bootstrap & config**: load `.env`; resolve webhook URL via `-f <ulid>` → `FIFOS_WEBHOOK` in `.env` → first-run TTY prompt. Bare ULID expands to `${FIFOS_DOMAIN:-https://fifos.dev}/w/<ulid>`; `.env` may store ULID or canonical webhook URL from an older CLI. Default subcommand (`fifos` with no args) is `info` — but on first run, when no webhook is resolved, prompt the user, save to `.env`, then run `info`. Non-TTY (no stdin attached): exit 2 with the "FIFOS_WEBHOOK not set" message instead of prompting.
 2. **HTTP helper**: `request(method, path, { body?, headers? })` returning `{ status, body, headers }`. Maps 4xx/5xx/network → exit code 2 with stderr message.
 3. **Subcommand dispatch** — exact-match keywords. Default = `info`.
 4. **Commands** (one function each):
@@ -317,7 +317,7 @@ Screens:
 
 §10.2 in SPEC.
 
-- Header: fifo name, copy-webhook button (same affordance as todos copy-list-URL).
+- Header: fifo name, copy fifo ULID button (same affordance as todos copy-list-URL).
 - Status filter chips: `todo` | `lock` | `done` | `fail`, with counts. Active = `todo` by default.
 - Items: fetch `GET /:slug?status=<chip>` (or content-negotiated JSON of /:slug filtered).
 - Each row: truncated body (tap to expand modal), position, status pill, age (relative time).
@@ -352,7 +352,7 @@ Use the `fifos` CLI to push/pop/pull work items on a FIFO queue.
 
 ## Setup
 - Each project's queue is configured by `FIFOS_WEBHOOK` in `.env`.
-- For multi-queue services, pass `-f <ulid|url>` per command instead.
+- For multi-queue services, pass `-f <ulid>` per command instead.
 
 ## Verbs
 - `fifos push "data"` — append an item. Use `--key <id>` for retry-safe pushes.
@@ -390,7 +390,7 @@ Tests in `tests/` (port the todos test harness):
 - `tests/queue.test.ts` — push/pop/pull/done/fail/skip atomicity; stale-lock done succeeds; lock reclaim; lock-TTL clamp `[10, 3600]`; retry id reuse + tail position; retry refuses skip; idempotency dedup including the unique-constraint loser case.
 - `tests/sse.test.ts` — `Last-Event-ID` replay; counter monotonicity; resync on stale id; resync on server restart (counter reset); 25s keep-alive frame.
 - `tests/billing.test.ts` — charge totals; deduped push is free; self-hosted is free; web-UI push (via webhook URL with session) charges normally.
-- `tests/cli.test.ts` — exit codes 0/1/2; `-f <ulid>` and `-f <url>` both work; `.fifos-lock` lifecycle (write on pull, delete on done/fail/skip); `--lock` durations parsed; `pop --block --timeout` exits 1 cleanly.
+- `tests/cli.test.ts` — exit codes 0/1/2; `-f <ulid>` and `.env` ULID/webhook; `.fifos-lock` lifecycle (write on pull, delete on done/fail/skip); `--lock` durations parsed; `pop --block --timeout` exits 1 cleanly.
 - `tests/purge.test.ts` — time-based retention sweep; idempotency-row sweep (>1h); pressure purge ordering (done before fail); pressure purge does not touch `todo` or `lock`.
 
 `bun run smoke` = lint + test + build (matches todos).

@@ -4,9 +4,9 @@
  * fifos — stateless CLI. Every subcommand is a single webhook call.
  *
  * Resolution order for the target webhook URL:
- *   1. `-f` / `--fifo <ulid|url>` flag (per-call override)
- *   2. `FIFOS_WEBHOOK` from the cwd `.env`
- *   3. Interactive TTY prompt → save to `.env`
+ *   1. `-f` / `--fifo <ulid>` flag (per-call override — ULID only)
+ *   2. `FIFOS_WEBHOOK` from the cwd `.env` (fifo ULID or legacy full webhook URL)
+ *   3. Interactive TTY prompt → save canonical webhook URL to `.env`
  *   4. Error (exit 2) when stdin isn't a TTY
  *
  * Exit codes (SPEC §2.4): 0 success / 1 empty / 2 error.
@@ -106,32 +106,64 @@ function readLineSync(): string {
   return buf.toString("utf-8", 0, n).replace(/\r?\n$/, "");
 }
 
-function canonicalize(input: string): string {
-  const s = input.trim();
-  if (ULID_RE.test(s)) {
-    const domain = process.env.FIFOS_DOMAIN || "https://fifos.dev";
-    return `${domain}/w/${s.toUpperCase()}`;
-  }
-  return s.replace(/\/$/, "");
+/** Expand a fifo ULID to `${FIFOS_DOMAIN}/w/<ULID>` or null if invalid. */
+function fifoUlidToWebhookBase(ulidStr: string): string | null {
+  const s = ulidStr.trim();
+  if (!ULID_RE.test(s)) return null;
+  const domain = (process.env.FIFOS_DOMAIN || "https://fifos.dev").replace(
+    /\/+$/,
+    "",
+  );
+  return `${domain}/w/${s.toUpperCase()}`;
 }
 
-function resolveWebhookUrl(override: string | null): string {
-  if (override) return canonicalize(override);
-  const fromEnv = getEnvWebhook();
-  if (fromEnv) return canonicalize(fromEnv);
-  if (!process.stdin.isTTY) {
+function requireFifoUlid(raw: string, ctx: string): string {
+  const url = fifoUlidToWebhookBase(raw);
+  if (!url) {
     console.error(
-      "FIFOS_WEBHOOK not set. Pass -f <ulid|url>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
+      `${ctx}: invalid fifo ULID (expect 26-character Crockford base32)`,
     );
     process.exit(2);
   }
-  process.stdout.write("Enter your fifos webhook URL or ULID: ");
-  const raw = readLineSync().trim();
-  if (!raw) {
-    console.error("No URL provided.");
+  return url;
+}
+
+/** `.env` line: fifo ULID or a legacy full webhook URL from older setups. */
+function webhookUrlFromEnvValue(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const fromUlid = fifoUlidToWebhookBase(s);
+  if (fromUlid) return fromUlid;
+  if (/^https?:\/\//i.test(s)) return s.replace(/\/+$/, "");
+  return null;
+}
+
+function resolveWebhookUrl(override: string | null): string {
+  if (override) return requireFifoUlid(override, "-f / --fifo");
+  const fromEnv = getEnvWebhook();
+  if (fromEnv) {
+    const url = webhookUrlFromEnvValue(fromEnv);
+    if (!url) {
+      console.error(
+        "FIFOS_WEBHOOK in .env must be a fifo ULID or a webhook URL. Fix .env or pass -f <ulid>.",
+      );
+      process.exit(2);
+    }
+    return url;
+  }
+  if (!process.stdin.isTTY) {
+    console.error(
+      "FIFOS_WEBHOOK not set. Pass -f <ulid>, set FIFOS_WEBHOOK in .env, or run interactively for the first-run prompt.",
+    );
     process.exit(2);
   }
-  const url = canonicalize(raw);
+  process.stdout.write("Enter your fifo ULID: ");
+  const raw = readLineSync().trim();
+  if (!raw) {
+    console.error("No ULID provided.");
+    process.exit(2);
+  }
+  const url = requireFifoUlid(raw, "Fifo ULID");
   saveEnvWebhook(url);
   return url;
 }
@@ -675,11 +707,11 @@ Usage:
   fifos help                     this message
 
 Global:
-  -f, --fifo <ulid|url>          override FIFOS_WEBHOOK for this call
+  -f, --fifo <ulid>              override FIFOS_WEBHOOK for this call (fifo ULID only)
   --json | --yaml                JSON/YAML output for info/peek/list/status
 
 Setup:
-  Set FIFOS_WEBHOOK in .env (first run will prompt).
+  Set FIFOS_WEBHOOK in .env (ULID or webhook URL; first interactive run saves the webhook URL).
 
 Exit codes:
   0  success

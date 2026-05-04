@@ -110,7 +110,7 @@ A lightweight, **stateless** CLI. No local file, no merge logic — every comman
 
 **Command parsing**: `push`, `pop`, `pull`, `done`, `fail`, `skip`, `status`, `retry`, `peek`, `info`, `list`, `open`, `skill`, `help` are exact-match keywords. Unknown subcommands are an error (we don't have the "anything else is a new item" affordance because `push` already takes data).
 
-**Global flag — `-f` / `--fifo <ulid|url>`** — recognized by every command. Overrides `FIFOS_WEBHOOK`. Accepts a bare 26-char ULID (CLI prepends `${FIFOS_DOMAIN:-https://fifos.dev}/w/`) or a full URL (used verbatim — supports self-hosted domains and dev `http://localhost:3000`). Resolution order: `-f` flag → `FIFOS_WEBHOOK` env → first-run TTY prompt (saves to `.env`) → error.
+**Global flag — `-f` / `--fifo <ulid>`** — recognized by every command. Overrides `FIFOS_WEBHOOK` from `.env`. Must be the fifo’s 26-character ULID; the CLI resolves `${FIFOS_DOMAIN:-https://fifos.dev}/w/<ulid>` (override `FIFOS_DOMAIN` for self-hosted / local dev). **`FIFOS_WEBHOOK` in `.env`** may be that same ULID or a legacy full webhook URL saved by the CLI. Resolution order: `-f` flag → `.env` `FIFOS_WEBHOOK` → first-run TTY prompt (writes canonical webhook URL to `.env`) → error.
 
 Multi-fifo services keep their own per-purpose env vars and pass the right one:
 
@@ -151,7 +151,7 @@ A skill file (`config/SKILL.md`) installed by `fifos skill` to `~/.claude/skills
 
 - Use `fifos pull` + `fifos done`/`fail`/`skip` for at-least-once work consumption (`fail` retryable, `skip` terminal).
 - Use `fifos pop` for fire-and-forget consumption.
-- `FIFOS_WEBHOOK` in `.env` is the default fifo connection; pass `-f <ulid|url>` to target a different fifo per command.
+- `FIFOS_WEBHOOK` in `.env` is the default fifo connection; pass `-f <ulid>` to target a different fifo per command.
 - Respect the lock timeout (30 min default) — long-running work should `pull`, do work, then `done` before the deadline. For known-long tasks, request a longer lock with `fifos pull --lock 1h` (max). Accepts bare seconds, or `s` / `m` / `h` suffixes.
 - Use `--key <s>` on push to make retries safe; use `fifos status <ulid>` to check whether previously pushed work has been processed; use `fifos retry <ulid>` to resubmit a `done`/`fail` item without re-pushing.
 
@@ -478,7 +478,7 @@ Mobile-first PWA, portrait-optimized. Same shell as todos.
 ### 10.2 Fifo detail
 
 - **Back arrow** → home.
-- **Header**: fifo name + webhook URL **copy** button (same affordance as todos).
+- **Header**: fifo name + **copy** button for the fifo ULID (for `-f` / `FIFOS_WEBHOOK`; full webhook URL is `https://<host>/w/<ulid>` if you need it).
 - **Status filter** chips at top: `todo` (default) | `lock` | `done` | `fail` | `skip`. Counts on each chip.
 - **Body**: items in chrono order (oldest first for todo/lock, newest first for done/fail/skip). Each row shows truncated body (tap to expand), position, status pill, age. Terminal rows (done/fail/skip) show truncated `reason` when set.
 - **"+"** to push (textarea modal — multi-line OK).
@@ -531,7 +531,7 @@ All items reflect the **current in-tree implementation** (`tests/`, `bun run smo
 - [x] **SSE**: `/w/:ulid/items` and `/f/fifos/items` with ring-buffer + `Last-Event-ID` replay + `resync` fallback (§6.5). 25s keep-alives.
 - [x] **Purger**: time-based sweep on 1h interval (§5.1). Batched 100 deletes.
 - [x] **Billing**: Legendum tabs — 2 cr per fifo create, 0.01 per webhook write, 2-cr threshold. No billing in self-hosted.
-- [x] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <ulid>`, `retry <ulid>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid|url>` flag. Documented exit codes 0/1/2. **`public/install.sh`** + `GET /install.sh` (nginx + Bun) + install dialog one-liner (§2.4, §6.6).
+- [x] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <ulid>`, `retry <ulid>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid>` flag. Documented exit codes 0/1/2. **`public/install.sh`** + `GET /install.sh` (nginx + Bun) + install dialog one-liner (§2.4, §6.6).
 - [x] **Frontend — layout**: top bar, install dialog, mobile-first.
 - [x] **Frontend — screens**: login, fifos home (drag to reorder via `PATCH /f/reorder`, swipe-delete), fifo detail (status filter, no item drag).
 - [x] **Frontend — live**: subscribe to `/w/:ulid/items` on detail; `/f/fifos/items` on home.

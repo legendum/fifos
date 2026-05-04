@@ -74,8 +74,8 @@ export default function InstallDialog({ onClose }: Props) {
           <section className="dialog-section">
             <h3>2. Add your webhook to a project</h3>
             <p>
-              Each fifo has a webhook URL (tap the URL under the fifo name to
-              copy it). Add it to your project's <code>.env</code>:
+              Each fifo shows its ULID under the name — tap to copy. Put the
+              ULID or full webhook URL in your project's <code>.env</code>:
             </p>
             <pre className="dialog-code">
               FIFOS_WEBHOOK=https://fifos.dev/w/01ABC123DEF456GHI789

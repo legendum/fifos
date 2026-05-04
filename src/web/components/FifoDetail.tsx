@@ -338,15 +338,11 @@ export default function FifoDetail({
               <button
                 type="button"
                 className="fifo-webhook-copy"
-                onClick={() =>
-                  webhookClipboard.copy(
-                    `${window.location.origin}/w/${fifo.ulid}`,
-                  )
-                }
+                onClick={() => webhookClipboard.copy(fifo.ulid)}
                 title={
                   webhookClipboard.copied
                     ? "Copied to clipboard"
-                    : "Click to copy webhook URL"
+                    : "Click to copy fifo ULID"
                 }
               >
                 <span className="fifo-webhook-text">{fifo.ulid}</span>
@@ -485,7 +481,7 @@ export default function FifoDetail({
                   title={
                     itemClipboard.copied
                       ? "Copied to clipboard"
-                      : `Updated ${formatLocalDateTime(expanded.updated_at)} — click to copy item ULID (e.g. fifos status, fifos retry)`
+                      : "Click to copy item ULID"
                   }
                 >
                   <span className="fifo-webhook-text">{expanded.id}</span>
