@@ -14,6 +14,7 @@ type Props = {
 };
 
 const PUSH_TRUNCATE_LEN = 240;
+const COPY_FEEDBACK_MS = 850;
 
 /** Relative time since last item update (`updated_at`, unix seconds). */
 function relativeUpdatedAgo(unixSec: number): string {
@@ -27,9 +28,44 @@ function relativeUpdatedAgo(unixSec: number): string {
   return `${d}d ago`;
 }
 
+function formatLocalDateTime(unixSec: number): string {
+  return new Date(unixSec * 1000).toLocaleString();
+}
+
 function truncate(s: string, n = PUSH_TRUNCATE_LEN): string {
   if (s.length <= n) return s;
   return `${s.slice(0, n).trimEnd()}…`;
+}
+
+function useClipboardFeedback() {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  const reset = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setCopied(false);
+  }, []);
+
+  const copy = useCallback((text: string) => {
+    if (typeof navigator === "undefined") return;
+    void navigator.clipboard?.writeText(text);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setCopied(true);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      setCopied(false);
+    }, COPY_FEEDBACK_MS);
+  }, []);
+
+  return { copied, copy, reset };
 }
 
 export default function FifoDetail({
@@ -47,8 +83,8 @@ export default function FifoDetail({
   const [expanded, setExpanded] = useState<Item | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState(fifo.name);
-  const [copied, setCopied] = useState(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webhookClipboard = useClipboardFeedback();
+  const itemClipboard = useClipboardFeedback();
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const bottomDockRef = useRef<HTMLDivElement>(null);
   const pushTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -194,20 +230,16 @@ export default function FifoDetail({
   }, [online, fifo.ulid, fetchFirstPage, status, debouncedQuery]);
 
   useEscape(!!expanded, () => setExpanded(null));
+
+  useEffect(() => {
+    itemClipboard.reset();
+  }, [expanded?.id, itemClipboard.reset]);
+
   useEscape(pushing, () => {
     setPushing(false);
     setPushText("");
     setPushError(null);
   });
-
-  const copyWebhookUrl = () => {
-    if (typeof navigator === "undefined") return;
-    const url = `${window.location.origin}/w/${fifo.ulid}`;
-    navigator.clipboard?.writeText(url);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    setCopied(true);
-    copyTimer.current = setTimeout(() => setCopied(false), 850);
-  };
 
   const submitPush = async () => {
     const body = pushText;
@@ -306,13 +338,19 @@ export default function FifoDetail({
               <button
                 type="button"
                 className="fifo-webhook-copy"
-                onClick={copyWebhookUrl}
+                onClick={() =>
+                  webhookClipboard.copy(
+                    `${window.location.origin}/w/${fifo.ulid}`,
+                  )
+                }
                 title={
-                  copied ? "Copied to clipboard" : "Click to copy webhook URL"
+                  webhookClipboard.copied
+                    ? "Copied to clipboard"
+                    : "Click to copy webhook URL"
                 }
               >
                 <span className="fifo-webhook-text">{fifo.ulid}</span>
-                {copied ? (
+                {webhookClipboard.copied ? (
                   <span className="copied-badge">Copied!</span>
                 ) : (
                   <CopyIcon />
@@ -350,7 +388,7 @@ export default function FifoDetail({
                   <span className="item-pos">#{it.position}</span>
                   <span
                     className="item-age"
-                    title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
+                    title={`Updated ${formatLocalDateTime(it.updated_at)}`}
                   >
                     {relativeUpdatedAgo(it.updated_at)}
                   </span>
@@ -436,15 +474,32 @@ export default function FifoDetail({
         <div className="dialog-overlay" onClick={() => setExpanded(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h2 className="dialog-heading-title dialog-heading-title--compact">
-                #{expanded.position} · {expanded.status}
-                <span
-                  className="dialog-heading-meta"
-                  title={`Updated ${new Date(expanded.updated_at * 1000).toLocaleString()}`}
+              <div className="dialog-header-main">
+                <h2 className="dialog-heading-title dialog-heading-title--compact">
+                  #{expanded.position} · {expanded.status}
+                </h2>
+                <button
+                  type="button"
+                  className="fifo-webhook-copy"
+                  onClick={() =>
+                    itemClipboard.copy(
+                      `${window.location.origin}/w/${fifo.ulid}/status/${expanded.id}`,
+                    )
+                  }
+                  title={
+                    itemClipboard.copied
+                      ? "Copied to clipboard"
+                      : `Updated ${formatLocalDateTime(expanded.updated_at)} — click to copy item status URL`
+                  }
                 >
-                  {relativeUpdatedAgo(expanded.updated_at)}
-                </span>
-              </h2>
+                  <span className="fifo-webhook-text">{expanded.id}</span>
+                  {itemClipboard.copied ? (
+                    <span className="copied-badge">Copied!</span>
+                  ) : (
+                    <CopyIcon />
+                  )}
+                </button>
+              </div>
               <button
                 className="dialog-close"
                 onClick={() => setExpanded(null)}
