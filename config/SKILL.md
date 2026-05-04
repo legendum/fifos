@@ -1,10 +1,9 @@
 # Fifos
 
-Use the `fifos` CLI to push/pop work items on a FIFO queue.
+Use the `fifos` CLI to push/pop/pull work items on a FIFO queue.
 
 ## Setup
-- Each project's queue is configured by `FIFOS_WEBHOOK` in `.env`. Only the cwd `.env` is read — no parent-dir walk. `cd` into the project dir before running, or export `FIFOS_WEBHOOK`, or pass `-f <ulid|url>` per call.
-- For multi-queue services, pass `-f <ulid|url>` per command instead.
+- Put `FIFOS_WEBHOOK` in `.env` in your project folder. The CLI only reads `.env` from the current working directory (no walk up). Options: run from that folder, or `export FIFOS_WEBHOOK`, or use `-f <ulid|url>` every time.
 
 ## Verbs
 - `fifos push "data"` — append an item (or pipe via stdin). Use `--key <id>` for retry-safe pushes; the dedupe window is 1 h, after which the same key creates a new item.

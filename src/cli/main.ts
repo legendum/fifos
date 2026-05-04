@@ -651,7 +651,7 @@ function cmdSkill(): number {
 }
 
 function cmdHelp(): number {
-  console.log(`fifos — push/pop work items on a FIFO queue
+  console.log(`fifos — push/pop/pull work items on a FIFO queue
 
 Usage:
   fifos                          info

@@ -348,7 +348,7 @@ File: `config/SKILL.md` — short markdown teaching agents how to use the CLI. S
 ```markdown
 # Fifos
 
-Use the `fifos` CLI to push/pop work items on a FIFO queue.
+Use the `fifos` CLI to push/pop/pull work items on a FIFO queue.
 
 ## Setup
 - Each project's queue is configured by `FIFOS_WEBHOOK` in `.env`.
