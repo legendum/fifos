@@ -157,6 +157,11 @@ export default function FifoDetail({
   }, [online, fifo.ulid, fetchFirstPage, status, debouncedQuery]);
 
   useEscape(!!expanded, () => setExpanded(null));
+  useEscape(pushing, () => {
+    setPushing(false);
+    setPushText("");
+    setPushError(null);
+  });
 
   const copyWebhookUrl = () => {
     if (typeof navigator === "undefined") return;

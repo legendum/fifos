@@ -137,6 +137,11 @@ export default function Fifos({
   }, [visible, online]);
 
   useEscape(!!deleteFifo, () => setDeleteFifo(null));
+  useEscape(creating, () => {
+    setCreating(false);
+    setNewName("");
+    setError(null);
+  });
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
