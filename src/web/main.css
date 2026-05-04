@@ -1167,7 +1167,7 @@ button.dialog-code-install-wrap {
 }
 .cat-count-value {
   text-align: center;
-  min-width: 0;
+  min-width: 3ch;
 }
 .cat-count-between {
   justify-self: center;
