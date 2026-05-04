@@ -1,7 +1,7 @@
 /**
- * Queue core — push/pop/pull/done/fail/retry.
+ * Queue core — push/pop/pull/done/fail/skip/retry.
  *
- * All five mutating verbs run inside a single `db.transaction` (which uses
+ * All mutating verbs run inside a single `db.transaction` (which uses
  * SQLite's BEGIN IMMEDIATE) so the read-then-write sequences are atomic
  * even under concurrent webhook traffic.
  *
@@ -12,17 +12,26 @@
  * has actually pulled it back to todo.
  */
 import {
+  DEFAULT_FIFO_MAX_RETRIES,
   FIFOS_LOCK_TIMEOUT_SECONDS,
   IDEMPOTENCY_WINDOW_SECONDS,
   LOCK_TIMEOUT_MAX_SECONDS,
   LOCK_TIMEOUT_MIN_SECONDS,
   MAX_ITEMS_PER_FIFO,
+  PURGE_BATCH_SIZE,
 } from "./constants.js";
 import { getDb } from "./db.js";
 import { publish } from "./sse.js";
 import { ulid as makeUlid } from "./ulid.js";
 
-export type ItemStatus = "todo" | "lock" | "done" | "fail" | "skip";
+import type { ItemStatus } from "./web_constants.js";
+
+export type { ItemStatus } from "./web_constants.js";
+export {
+  ITEM_STATUSES,
+  ITEM_STATUSES_PIPE,
+  isItemStatus,
+} from "./web_constants.js";
 
 export type StatusCounts = Record<ItemStatus, number>;
 
@@ -38,6 +47,7 @@ export type ItemRow = {
   updated_at: number;
   status: ItemStatus;
   locked_until: number | null;
+  retry_count: number;
   reason: string | null;
 };
 
@@ -54,13 +64,16 @@ export type FifoLookup = {
   ulid: string;
   name: string;
   slug: string;
+  max_retries: number;
 };
 
 /** Resolve a fifo by its public ULID. Used by every webhook handler. */
 export function getFifoByUlid(ulid: string): FifoLookup | null {
   const db = getDb();
   const row = db
-    .query("SELECT id, user_id, ulid, name, slug FROM fifos WHERE ulid = ?")
+    .query(
+      "SELECT id, user_id, ulid, name, slug, max_retries FROM fifos WHERE ulid = ?",
+    )
     .get(ulid) as FifoLookup | undefined;
   return row ?? null;
 }
@@ -97,9 +110,9 @@ function reclaimLocks(fifoId: number): void {
 /**
  * Pressure purge — invoked by `push` before returning `fifo_full`.
  *
- * Phase 6 will move this to `src/lib/purge.ts` and run the same logic on a
- * timer too. For now we keep a local copy so the push tx can call it
- * synchronously.
+ * Deletes up to `PURGE_BATCH_SIZE` rows per terminal status (`done` / `fail` /
+ * `skip`), oldest `updated_at` first. The time-based retention sweep in
+ * `purge.ts` uses the same batch size. See `purge.ts` / SPEC §5.
  *
  * Returns `true` if any rows were freed.
  */
@@ -112,10 +125,11 @@ export function pressurePurge(fifoId: number): boolean {
           SELECT id FROM items
            WHERE fifo_id = ? AND status = ?
            ORDER BY updated_at ASC
-           LIMIT 100
+           LIMIT ?
         )`,
       fifoId,
       status,
+      PURGE_BATCH_SIZE,
     );
     return result.changes;
   };
@@ -133,7 +147,7 @@ function loadItemById(id: number): ItemRow | null {
   const row = db
     .query(
       `SELECT ulid AS id, position, data, created_at, updated_at, status,
-              locked_until, reason
+              locked_until, reason, retry_count
          FROM items WHERE id = ?`,
     )
     .get(id) as ItemRow | undefined;
@@ -315,17 +329,16 @@ export function done(
 }
 
 /**
- * Mark a locked item failed (retryable). Returns null if it's not in 'lock' anymore.
- *
- * `reason` is optional diagnostic text shown in the web GUI and read paths;
- * caller is responsible for length-capping (the API boundary enforces 1 KiB).
+ * Mark a locked item failed (retryable), or auto-`skip` when fail attempts would
+ * exceed `fifos.max_retries`. Returns `exhausted_retries: true` when this call
+ * ended in `skip` for that reason.
  */
 export function fail(
   fifoId: number,
   itemUlid: string,
   reason?: string | null,
-): ItemRow | null {
-  return finishLocked(fifoId, itemUlid, "fail", reason ?? null);
+): { row: ItemRow; exhausted_retries: boolean } | null {
+  return finishLockedInner(fifoId, itemUlid, "fail", reason ?? null);
 }
 
 /**
@@ -342,30 +355,64 @@ export function skip(
   return finishLocked(fifoId, itemUlid, "skip", reason ?? null);
 }
 
+/**
+ * `retry_count` counts how many times an item has been returned to `todo` via
+ * `retry()` (not raw failure count). `fail()` compares `retry_count + 1` to
+ * `fifos.max_retries` to decide `fail` vs auto-`skip`.
+ */
+function finishLockedInner(
+  fifoId: number,
+  itemUlid: string,
+  next: "done" | "fail" | "skip",
+  reason: string | null,
+): { row: ItemRow; exhausted_retries: boolean } | null {
+  const db = getDb();
+  return db.transaction(() => {
+    const row = db
+      .query(
+        `SELECT i.id AS item_pk, i.status, i.retry_count, f.max_retries
+           FROM items i
+           JOIN fifos f ON f.id = i.fifo_id
+          WHERE i.fifo_id = ? AND i.ulid = ?`,
+      )
+      .get(fifoId, itemUlid) as
+      | {
+          item_pk: number;
+          status: ItemStatus;
+          retry_count: number;
+          max_retries: number;
+        }
+      | undefined;
+    if (!row) return null;
+    if (row.status !== "lock") return null;
+
+    const maxRetries = row.max_retries ?? DEFAULT_FIFO_MAX_RETRIES;
+    const nextStatus: ItemStatus =
+      next === "fail" && row.retry_count + 1 >= maxRetries ? "skip" : next;
+    const exhausted_retries = next === "fail" && nextStatus === "skip";
+
+    db.run(
+      `UPDATE items
+          SET status = ?, locked_until = NULL, reason = ?,
+              updated_at = strftime('%s','now')
+        WHERE id = ?`,
+      nextStatus,
+      reason,
+      row.item_pk,
+    );
+    const loaded = loadItemById(row.item_pk);
+    if (!loaded) return null;
+    return { row: loaded, exhausted_retries };
+  })();
+}
+
 function finishLocked(
   fifoId: number,
   itemUlid: string,
   next: "done" | "fail" | "skip",
   reason: string | null,
 ): ItemRow | null {
-  const db = getDb();
-  return db.transaction(() => {
-    const row = db
-      .query("SELECT id, status FROM items WHERE fifo_id = ? AND ulid = ?")
-      .get(fifoId, itemUlid) as { id: number; status: ItemStatus } | undefined;
-    if (!row) return null;
-    if (row.status !== "lock") return null;
-    db.run(
-      `UPDATE items
-          SET status = ?, locked_until = NULL, reason = ?,
-              updated_at = strftime('%s','now')
-        WHERE id = ?`,
-      next,
-      reason,
-      row.id,
-    );
-    return loadItemById(row.id);
-  })();
+  return finishLockedInner(fifoId, itemUlid, next, reason)?.row ?? null;
 }
 
 /**
@@ -399,7 +446,8 @@ export function retry(
     db.run(
       `UPDATE items
           SET status = 'todo', position = ?, locked_until = NULL,
-              reason = NULL, updated_at = strftime('%s','now')
+              reason = NULL, updated_at = strftime('%s','now'),
+              retry_count = retry_count + 1
         WHERE id = ?`,
       seqRow.seq,
       row.id,

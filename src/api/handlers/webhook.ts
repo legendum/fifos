@@ -7,20 +7,18 @@ import {
   emptyCounts,
   fail,
   getFifoByUlid,
+  ITEM_STATUSES_PIPE,
+  isItemStatus,
   pop,
   pull,
   push,
   retry,
-  skip,
   type StatusCounts,
+  skip,
 } from "../../lib/queue.js";
-import { publish, publishUserFifos, subscribe } from "../../lib/sse.js";
+import { publish, subscribe } from "../../lib/sse.js";
 import { json } from "../json.js";
-import { getFifosPayload } from "./fifos.js";
-
-function notifyFifosChanged(userId: number): void {
-  publishUserFifos(userId, () => getFifosPayload(userId));
-}
+import { notifyFifosChanged } from "./fifos.js";
 
 const NOT_FOUND_ULID = json({ error: "not_found", reason: "ulid" }, 404);
 
@@ -160,7 +158,21 @@ type FinishVerb = (
   reason: string | null,
 ) => ReturnType<typeof done>;
 
-/** Shared lock → terminal-state handler for done/fail/skip. */
+type FifoByUlid = NonNullable<ReturnType<typeof getFifoByUlid>>;
+
+async function chargePublishNotifyJson(
+  fifo: FifoByUlid,
+  change: Record<string, unknown>,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const chargeError = await chargeWebhookWrite(fifo.user_id);
+  if (chargeError) return chargeError;
+  publish(`fifo:${fifo.id}`, "change", change);
+  notifyFifosChanged(fifo.user_id);
+  return json(body);
+}
+
+/** Shared lock → terminal-state handler for done/skip. */
 async function postFinish(
   req: Request,
   ulid: string,
@@ -176,26 +188,54 @@ async function postFinish(
   const row = verb(fifo.id, itemUlid, parsed.reason);
   if (!row) return json({ error: "not_locked" }, 404);
 
-  const chargeError = await chargeWebhookWrite(fifo.user_id);
-  if (chargeError) return chargeError;
-  publish(`fifo:${fifo.id}`, "change", {
+  const change = {
     id: row.id,
     status: row.status,
     position: row.position,
     reason: row.reason,
+  };
+  return chargePublishNotifyJson(fifo, change, {
+    id: row.id,
+    status: row.status,
+    reason: row.reason,
   });
-  notifyFifosChanged(fifo.user_id);
-
-  return json({ id: row.id, status: row.status, reason: row.reason });
 }
 
 /** POST /w/:ulid/done/:id — locked item → done. Optional reason body (max 1 KiB). */
 export const postDone = (req: Request, ulid: string, itemUlid: string) =>
   postFinish(req, ulid, itemUlid, done);
 
-/** POST /w/:ulid/fail/:id — locked item → fail (retryable). Optional reason body. */
-export const postFail = (req: Request, ulid: string, itemUlid: string) =>
-  postFinish(req, ulid, itemUlid, fail);
+/** POST /w/:ulid/fail/:id — locked item → fail (or auto-skip if retries exhausted). Optional reason body. */
+export async function postFail(
+  req: Request,
+  ulid: string,
+  itemUlid: string,
+): Promise<Response> {
+  const fifo = getFifoByUlid(ulid);
+  if (!fifo) return notFoundUlid();
+
+  const parsed = await parseReasonBody(req);
+  if ("error" in parsed) return parsed.error;
+
+  const result = fail(fifo.id, itemUlid, parsed.reason);
+  if (!result) return json({ error: "not_locked" }, 404);
+
+  const row = result.row;
+  const changePayload: Record<string, unknown> = {
+    id: row.id,
+    status: row.status,
+    position: row.position,
+    reason: row.reason,
+  };
+  if (result.exhausted_retries) changePayload.exhausted_retries = true;
+
+  return chargePublishNotifyJson(fifo, changePayload, {
+    id: row.id,
+    status: row.status,
+    reason: row.reason,
+    exhausted_retries: result.exhausted_retries,
+  });
+}
 
 /** POST /w/:ulid/skip/:id — locked item → skip (terminal; retry refuses). Optional reason body. */
 export const postSkip = (req: Request, ulid: string, itemUlid: string) =>
@@ -321,11 +361,11 @@ export function getPeek(req: Request, ulid: string): Response {
 export function getList(req: Request, ulid: string, status: string): Response {
   const fifo = getFifoByUlid(ulid);
   if (!fifo) return notFoundUlid();
-  if (!["todo", "lock", "done", "fail", "skip"].includes(status)) {
+  if (!isItemStatus(status)) {
     return json(
       {
         error: "invalid_request",
-        message: "status must be one of todo|lock|done|fail|skip",
+        message: `status must be one of ${ITEM_STATUSES_PIPE}`,
       },
       400,
     );

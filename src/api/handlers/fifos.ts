@@ -1,10 +1,17 @@
 import { chargeFifoCreate } from "../../lib/billing.js";
-import { MAX_FIFOS_PER_USER } from "../../lib/constants.js";
+import {
+  DEFAULT_FIFO_MAX_RETRIES,
+  MAX_FIFO_MAX_RETRIES,
+  MAX_FIFOS_PER_USER,
+  MIN_FIFO_MAX_RETRIES,
+} from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
 import { toSlug, validateFifoName } from "../../lib/fifos.js";
 import {
   emptyCounts,
+  ITEM_STATUSES_PIPE,
   type ItemStatus,
+  isItemStatus,
   type StatusCounts,
 } from "../../lib/queue.js";
 import { publishUserFifos, subscribe } from "../../lib/sse.js";
@@ -19,6 +26,7 @@ type FifoRow = {
   slug: string;
   position: number;
   seq: number;
+  max_retries: number;
   created_at: number;
   updated_at: number;
 };
@@ -28,6 +36,7 @@ type FifoSummary = {
   slug: string;
   ulid: string;
   position: number;
+  max_retries: number;
   counts: StatusCounts;
   created_at: number;
 };
@@ -57,11 +66,31 @@ function getCountsByFifo(fifoIds: number[]): Map<number, StatusCounts> {
   return map;
 }
 
+/** `value === undefined` is valid (caller omits field). */
+function maxRetriesIfInvalid(value: unknown): Response | null {
+  if (value === undefined) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MIN_FIFO_MAX_RETRIES ||
+    value > MAX_FIFO_MAX_RETRIES
+  ) {
+    return json(
+      {
+        error: "invalid_request",
+        message: `max_retries must be an integer from ${MIN_FIFO_MAX_RETRIES} to ${MAX_FIFO_MAX_RETRIES}`,
+      },
+      400,
+    );
+  }
+  return null;
+}
+
 export function getFifosPayload(userId: number): { fifos: FifoSummary[] } {
   const db = getDb();
   const rows = db
     .query(
-      "SELECT id, ulid, name, slug, position, created_at FROM fifos WHERE user_id = ? ORDER BY position, id",
+      "SELECT id, ulid, name, slug, position, max_retries, created_at FROM fifos WHERE user_id = ? ORDER BY position, id",
     )
     .all(userId) as FifoRow[];
 
@@ -71,13 +100,14 @@ export function getFifosPayload(userId: number): { fifos: FifoSummary[] } {
     slug: r.slug,
     ulid: r.ulid,
     position: r.position,
+    max_retries: r.max_retries,
     counts: counts.get(r.id) ?? emptyCounts(),
     created_at: r.created_at,
   }));
   return { fifos };
 }
 
-function notifyFifosChanged(userId: number): void {
+export function notifyFifosChanged(userId: number): void {
   publishUserFifos(userId, () => getFifosPayload(userId));
 }
 
@@ -100,12 +130,16 @@ export async function createFifo(
   req: Request,
   userId: number,
 ): Promise<Response> {
-  let body: { name?: string };
+  let body: { name?: string; max_retries?: number };
   try {
-    body = (await req.json()) as { name?: string };
+    body = (await req.json()) as { name?: string; max_retries?: number };
   } catch {
     return json({ error: "invalid_request", message: "Invalid JSON" }, 400);
   }
+
+  const maxRetriesIn = body.max_retries;
+  const maxRetriesErr = maxRetriesIfInvalid(maxRetriesIn);
+  if (maxRetriesErr) return maxRetriesErr;
 
   const name = body.name?.trim();
   const nameError = validateFifoName(name || "");
@@ -152,13 +186,15 @@ export async function createFifo(
 
   const id = ulid();
   const position = maxPos.max_pos + 1;
+  const resolvedMax = maxRetriesIn ?? DEFAULT_FIFO_MAX_RETRIES;
   db.run(
-    "INSERT INTO fifos (user_id, ulid, name, slug, position) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO fifos (user_id, ulid, name, slug, position, max_retries) VALUES (?, ?, ?, ?, ?, ?)",
     userId,
     id,
     name!,
     slug,
     position,
+    resolvedMax,
   );
 
   notifyFifosChanged(userId);
@@ -170,6 +206,7 @@ export async function createFifo(
       ulid: id,
       webhook_url: `/w/${id}`,
       position,
+      max_retries: resolvedMax,
     },
     201,
   );
@@ -203,18 +240,18 @@ export function getFifo(
 
   const row = db
     .query(
-      "SELECT id, ulid, name, slug, position, created_at FROM fifos WHERE user_id = ? AND slug = ?",
+      "SELECT id, ulid, name, slug, position, max_retries, created_at FROM fifos WHERE user_id = ? AND slug = ?",
     )
     .get(userId, slug) as FifoRow | undefined;
   if (!row) return json({ error: "not_found", reason: "fifo" }, 404);
 
   const url = new URL(req.url);
   const statusParam = url.searchParams.get("status") ?? "todo";
-  if (!["todo", "lock", "done", "fail", "skip"].includes(statusParam)) {
+  if (!isItemStatus(statusParam)) {
     return json(
       {
         error: "invalid_request",
-        message: "status must be one of todo|lock|done|fail|skip",
+        message: `status must be one of ${ITEM_STATUSES_PIPE}`,
       },
       400,
     );
@@ -238,6 +275,7 @@ export function getFifo(
     name: row.name,
     slug: row.slug,
     ulid: row.ulid,
+    max_retries: row.max_retries,
     counts,
     items,
   };
@@ -256,56 +294,95 @@ export function getFifo(
   return null;
 }
 
-/** PATCH /:slug — rename. */
+/** PATCH /:slug — rename and/or update max_retries. */
 export async function renameFifo(
   req: Request,
   oldSlug: string,
   userId: number,
 ): Promise<Response> {
-  let body: { name?: string };
+  let body: { name?: string; max_retries?: number };
   try {
-    body = (await req.json()) as { name?: string };
+    body = (await req.json()) as { name?: string; max_retries?: number };
   } catch {
     return json({ error: "invalid_request", message: "Invalid JSON" }, 400);
   }
 
-  const name = body.name?.trim();
-  const nameError = validateFifoName(name || "");
-  if (nameError)
-    return json({ error: "invalid_request", message: nameError }, 400);
+  const nameIn = body.name?.trim();
+  const maxIn = body.max_retries;
 
-  const newSlug = toSlug(name!);
+  if ((!nameIn || nameIn.length === 0) && maxIn === undefined) {
+    return json(
+      {
+        error: "invalid_request",
+        message: "Provide name and/or max_retries",
+      },
+      400,
+    );
+  }
+
+  const maxInErr = maxRetriesIfInvalid(maxIn);
+  if (maxInErr) return maxInErr;
+
   const db = getDb();
 
   const row = db
-    .query("SELECT id, slug FROM fifos WHERE user_id = ? AND slug = ?")
-    .get(userId, oldSlug) as FifoRow | undefined;
+    .query("SELECT id, slug, name FROM fifos WHERE user_id = ? AND slug = ?")
+    .get(userId, oldSlug) as
+    | { id: number; slug: string; name: string }
+    | undefined;
   if (!row) return json({ error: "not_found", reason: "fifo" }, 404);
 
-  if (newSlug !== row.slug) {
-    const existing = db
-      .query("SELECT 1 FROM fifos WHERE user_id = ? AND slug = ?")
-      .get(userId, newSlug);
-    if (existing) {
-      return json(
-        {
-          error: "invalid_request",
-          message: `A fifo with URL "${newSlug}" already exists`,
-        },
-        400,
-      );
+  let newName = row.name;
+  let newSlug = row.slug;
+
+  if (nameIn && nameIn.length > 0) {
+    const nameError = validateFifoName(nameIn);
+    if (nameError)
+      return json({ error: "invalid_request", message: nameError }, 400);
+
+    newSlug = toSlug(nameIn);
+    newName = nameIn;
+
+    if (newSlug !== row.slug) {
+      const existing = db
+        .query("SELECT 1 FROM fifos WHERE user_id = ? AND slug = ?")
+        .get(userId, newSlug);
+      if (existing) {
+        return json(
+          {
+            error: "invalid_request",
+            message: `A fifo with URL "${newSlug}" already exists`,
+          },
+          400,
+        );
+      }
     }
   }
 
-  db.run(
-    "UPDATE fifos SET name = ?, slug = ?, updated_at = strftime('%s','now') WHERE id = ?",
-    name!,
-    newSlug,
-    row.id,
-  );
+  const setParts: string[] = [];
+  const args: unknown[] = [];
+  if (nameIn && nameIn.length > 0) {
+    setParts.push("name = ?", "slug = ?");
+    args.push(newName, newSlug);
+  }
+  if (maxIn !== undefined) {
+    setParts.push("max_retries = ?");
+    args.push(maxIn);
+  }
+  setParts.push("updated_at = strftime('%s','now')");
+  args.push(row.id);
+  db.run(`UPDATE fifos SET ${setParts.join(", ")} WHERE id = ?`, ...args);
 
   notifyFifosChanged(userId);
-  return json({ name, slug: newSlug, old_slug: oldSlug });
+
+  const out: Record<string, unknown> = {};
+  if (nameIn && nameIn.length > 0) {
+    out.name = newName;
+    out.slug = newSlug;
+    out.old_slug = oldSlug;
+  }
+  if (maxIn !== undefined) out.max_retries = maxIn;
+  return json(out);
 }
 
 /** DELETE /:slug — cascade-delete via FK. */

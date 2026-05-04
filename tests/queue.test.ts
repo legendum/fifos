@@ -7,10 +7,24 @@ let q: typeof import("../src/lib/queue");
 let getDb: typeof import("../src/lib/db").getDb;
 let userId: number;
 
-async function mkFifo(slug: string): Promise<{ id: number; ulid: string }> {
+async function mkFifo(
+  slug: string,
+  maxRetries?: number,
+): Promise<{ id: number; ulid: string }> {
   const db = getDb();
   const ulidMod = await import("../src/lib/ulid");
   const fifoUlid = ulidMod.ulid();
+  if (maxRetries != null) {
+    const result = db.run(
+      "INSERT INTO fifos (user_id, ulid, name, slug, max_retries) VALUES (?, ?, ?, ?, ?)",
+      userId,
+      fifoUlid,
+      slug,
+      slug,
+      maxRetries,
+    );
+    return { id: Number(result.lastInsertRowid), ulid: fifoUlid };
+  }
   const result = db.run(
     "INSERT INTO fifos (user_id, ulid, name, slug) VALUES (?, ?, ?, ?)",
     userId,
@@ -213,9 +227,10 @@ describe("queue.pull / done / fail", () => {
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
     const failed = q.fail(f.id, pulled.id);
-    expect(failed!.status).toBe("fail");
+    expect(failed!.row.status).toBe("fail");
+    expect(failed!.exhausted_retries).toBe(false);
     // No reason supplied → reason stays NULL.
-    expect(failed!.reason).toBeNull();
+    expect(failed!.row.reason).toBeNull();
   });
 
   test("fail with a reason persists reason", async () => {
@@ -223,8 +238,9 @@ describe("queue.pull / done / fail", () => {
     q.push(f.id, "broken");
     const pulled = q.pull(f.id, 60)!;
     const failed = q.fail(f.id, pulled.id, "exit code 42");
-    expect(failed!.status).toBe("fail");
-    expect(failed!.reason).toBe("exit code 42");
+    expect(failed!.row.status).toBe("fail");
+    expect(failed!.exhausted_retries).toBe(false);
+    expect(failed!.row.reason).toBe("exit code 42");
 
     // And the read-back reflects it too.
     const fresh = getDb()
@@ -455,6 +471,73 @@ describe("queue.retry", () => {
     const r = q.retry(f.id, pulled.id);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("wrong_status");
+  });
+});
+
+describe("queue.fail max_retries → skip", () => {
+  test("first fail stays fail when under cap (default max_retries=3)", async () => {
+    const f = await mkFifo("fail-under-cap");
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    const out = q.fail(f.id, pulled.id, "attempt 1");
+    expect(out).not.toBeNull();
+    expect(out!.row.status).toBe("fail");
+    expect(out!.exhausted_retries).toBe(false);
+    expect(out!.row.retry_count).toBe(0);
+  });
+
+  test("third fail becomes skip after two retries (default max_retries=3)", async () => {
+    const f = await mkFifo("fail-to-skip-default");
+    q.push(f.id, "x");
+    let pulled = q.pull(f.id, 60)!;
+    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+    expect(q.retry(f.id, pulled.id).ok).toBe(true);
+
+    pulled = q.pull(f.id, 60)!;
+    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+    expect(q.retry(f.id, pulled.id).ok).toBe(true);
+
+    pulled = q.pull(f.id, 60)!;
+    const terminal = q.fail(f.id, pulled.id, "last strike");
+    expect(terminal).not.toBeNull();
+    expect(terminal!.row.status).toBe("skip");
+    expect(terminal!.exhausted_retries).toBe(true);
+    expect(terminal!.row.reason).toBe("last strike");
+    const r = q.retry(f.id, pulled.id);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("wrong_status");
+  });
+
+  test("max_retries=1: first fail becomes skip", async () => {
+    const f = await mkFifo("fail-skip-mr1", 1);
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    const out = q.fail(f.id, pulled.id);
+    expect(out).not.toBeNull();
+    expect(out!.row.status).toBe("skip");
+    expect(out!.exhausted_retries).toBe(true);
+  });
+
+  test("max_retries=2: second fail after one retry becomes skip", async () => {
+    const f = await mkFifo("fail-skip-mr2", 2);
+    q.push(f.id, "x");
+    let pulled = q.pull(f.id, 60)!;
+    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+    expect(q.retry(f.id, pulled.id).ok).toBe(true);
+    pulled = q.pull(f.id, 60)!;
+    const out = q.fail(f.id, pulled.id);
+    expect(out!.row.status).toBe("skip");
+    expect(out!.exhausted_retries).toBe(true);
+  });
+
+  test("done is unaffected by retry_count and max_retries", async () => {
+    const f = await mkFifo("done-ignores-max", 1);
+    q.push(f.id, "x");
+    const pulled = q.pull(f.id, 60)!;
+    getDb().run("UPDATE items SET retry_count = 99 WHERE fifo_id = ? AND ulid = ?", f.id, pulled.id);
+    const finished = q.done(f.id, pulled.id, "ok");
+    expect(finished).not.toBeNull();
+    expect(finished!.status).toBe("done");
   });
 });
 

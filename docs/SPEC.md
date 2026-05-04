@@ -45,7 +45,7 @@ An item is an arbitrary UTF-8 text body with a status and a position.
 - **Body**: any text (JSON, Markdown, YAML, plain). UTF-8 only. **Max 64 KB.**
 - **Status**: `todo` (queued), `lock` (pulled, awaiting done/fail/skip), `done` (popped or marked done), `fail` (marked fail — retryable), `skip` (marked skip — terminal, not retryable).
 - **Position**: server-assigned `INTEGER` from `seq`; monotonically increasing per fifo. FIFO order = ascending `position` among `todo` items.
-- **ID**: per-item ULID (Crockford base32, 26 chars — 48-bit ms timestamp + 80-bit random, per the published spec). Public — used in `done/:id`, `fail/:id`, `skip/:id`, `retry/:id`, `status/:id`, and as the `id` field in all webhook responses and SSE events. Lex-sortable and timestamp-decodable. The integer PK is server-internal and never exposed.
+- **ID**: per-item ULID (Crockford base32, 26 chars — 48-bit ms timestamp + 80-bit random, per the published spec). Public — used in webhook paths `…/done/:id`, `…/fail/:id`, `…/skip/:id`, `…/retry/:id`, `…/status/:id` (trailing segment; value is always this ULID, never the integer PK), and as the `id` field in all webhook responses and SSE payloads. Lex-sortable and timestamp-decodable. The integer PK is server-internal and never exposed.
 
 #### State machine
 
@@ -86,15 +86,15 @@ A lightweight, **stateless** CLI. No local file, no merge logic — every comman
 |---|---|
 | `fifos push "data"` | Push one item. Body is the literal arg. |
 | `echo data \| fifos push` | Push one item. Whole stdin (multi-line OK) = one item body. |
-| `fifos push --key <s> "data"` | Idempotent push. Server dedupes by `(fifo, key)` for 1h — second call returns the same item id with `200` (free) instead of `201`. Sends `Idempotency-Key: <s>` header. |
+| `fifos push --key <s> "data"` | Idempotent push. Server dedupes by `(fifo, key)` for 1h — second call returns the same item (same ULID; JSON field `id`) with `200` (free) instead of `201`. Sends `Idempotency-Key: <s>` header. |
 | `fifos pop` | Atomically mark oldest `todo` as `done` and print its body. `204` → exit 1, no output. |
 | `fifos pop --block [--timeout 60]` | Open SSE on `/items`; wait for a `push` event; then pop. Reconnects on drop using `Last-Event-ID`. `--timeout` (seconds) bounds the wait — on timeout exits 1, no output. Default: no timeout. |
-| `fifos pull [--lock <dur>]` | Atomically mark oldest `todo` as `lock`. Stores `id` in `.fifos-lock` (per-cwd, gitignored). `--lock` accepts bare seconds (`600`), or `300s` / `5m` / `1h`. Clamped server-side to `[10s, 1h]`. |
-| `fifos done` | POST `/done/:id` using the id from `.fifos-lock`. Removes the lock file on success. |
-| `fifos fail [reason words...]` | POST `/fail/:id` using the id from `.fifos-lock`. Optional positional reason (or stdin) is sent as `text/plain` body, max 1 KiB. Removes the lock file on success. **Retryable** via `fifos retry <id>`. |
-| `fifos skip [reason words...]` | POST `/skip/:id` using the id from `.fifos-lock`. Same body contract as `fail`. **Terminal** — `fifos retry` refuses (`wrong_status`). Use for malformed/unsupported items. |
-| `fifos status <id>` | Print one item's state. Output: `{ id, status, position, created_at, updated_at }`. Exit 1 if id unknown. |
-| `fifos retry <id>` | Move a `done` or `fail` item back to `todo` at the tail of the fifo. Same id retained. Exit 1 if id unknown or already `todo`/`lock`/`skip`. |
+| `fifos pull [--lock <dur>]` | Atomically mark oldest `todo` as `lock`. Stores the item ULID in `.fifos-lock` (per-cwd, gitignored). `--lock` accepts bare seconds (`600`), or `300s` / `5m` / `1h`. Clamped server-side to `[10s, 1h]`. |
+| `fifos done` | POST `/done/:id` using the ULID from `.fifos-lock`. Removes the lock file on success. |
+| `fifos fail [reason words...]` | POST `/fail/:id` using the ULID from `.fifos-lock`. Optional positional reason (or stdin) is sent as `text/plain` body, max 1 KiB. Removes the lock file on success. **Retryable** via `fifos retry <ulid>`. |
+| `fifos skip [reason words...]` | POST `/skip/:id` using the ULID from `.fifos-lock`. Same body contract as `fail`. **Terminal** — `fifos retry` refuses (`wrong_status`). Use for malformed/unsupported items. |
+| `fifos status <ulid>` | Print one item's state. Output: `{ id, status, position, created_at, updated_at }` (`id` is the ULID). Exit 1 if ulid unknown. |
+| `fifos retry <ulid>` | Move a `done` or `fail` item back to `todo` at the tail of the fifo. Same ULID retained. Exit 1 if ulid unknown or already `todo`/`lock`/`skip`. |
 | `fifos peek --items=5` | GET `/peek?n=5`. Default n=10. Pretty-printed list. |
 | `fifos info` | Pretty: `fifo: foo / todo: 3, lock: 1, done: 12, fail: 0, skip: 0`. `--json` / `--yaml` switch output format (also apply to `peek` and `list`). |
 | `fifos list todo --items=5` | List up to N todo items, oldest first. Same flags as `info`. |
@@ -122,7 +122,7 @@ fifos -f "$FIFOS_DEPLOYS" pull
 | Code | Meaning |
 |---|---|
 | 0 | Success — got an item / completed action. |
-| 1 | Empty queue, missing item id, or `--block --timeout` expired. Not an error, just "nothing to do". |
+| 1 | Empty queue, missing item `<ulid>` (for `status` / `retry`), or `--block --timeout` expired. Not an error, just "nothing to do". |
 | 2 | Error — network failure, auth (`402`), 4xx (other than `204`/`404` no-op), 5xx, or invalid usage. |
 
 This lets shell scripts branch reliably: `if data=$(fifos pop); then ...; elif [ $? -eq 1 ]; then sleep 1; else exit 2; fi`.
@@ -131,7 +131,7 @@ This lets shell scripts branch reliably: `if data=$(fifos pop); then ...; elif [
 
 ### 2.5 Local lock file (`.fifos-lock`)
 
-`fifos pull` writes a single line: the item ULID. `fifos done` / `fail` / `skip` reads it and deletes it. This is the **only** local state — it's per-project, gitignore'd by default. If a script crashes between `pull` and finalize, the file persists; the user can `cat .fifos-lock` to see what's in flight, or wait for the 30-minute server-side lock expiry (which will flip the item back to `todo` — at which point `done`/`fail`/`skip` on that id returns 404).
+`fifos pull` writes a single line: the item ULID. `fifos done` / `fail` / `skip` reads it and deletes it. This is the **only** local state — it's per-project, gitignore'd by default. If a script crashes between `pull` and finalize, the file persists; the user can `cat .fifos-lock` to see what's in flight, or wait for the 30-minute server-side lock expiry (which will flip the item back to `todo` — at which point `done`/`fail`/`skip` on that ULID returns 404).
 
 ### 2.6 Reordering
 
@@ -146,7 +146,7 @@ A skill file (`config/SKILL.md`) installed by `fifos skill` to `~/.claude/skills
 - Use `fifos pop` for fire-and-forget consumption.
 - `FIFOS_WEBHOOK` in `.env` is the default fifo connection; pass `-f <ulid|url>` to target a different fifo per command.
 - Respect the lock timeout (30 min default) — long-running work should `pull`, do work, then `done` before the deadline. For known-long tasks, request a longer lock with `fifos pull --lock 1h` (max). Accepts bare seconds, or `s` / `m` / `h` suffixes.
-- Use `--key <id>` on push to make retries safe; use `fifos status <id>` to check whether previously pushed work has been processed; use `fifos retry <id>` to resubmit a `done`/`fail` item without re-pushing.
+- Use `--key <s>` on push to make retries safe; use `fifos status <ulid>` to check whether previously pushed work has been processed; use `fifos retry <ulid>` to resubmit a `done`/`fail` item without re-pushing.
 
 ---
 
@@ -157,8 +157,8 @@ A skill file (`config/SKILL.md`) installed by `fifos skill` to `~/.claude/skills
 ### 3.1 Tables
 
 - **users**: `id` (PK), `email` (UNIQUE NOT NULL), `legendum_token`, `created_at`. Identical to todos.
-- **fifos**: `id` (PK), `user_id` (FK), `ulid` (UNIQUE), `name`, `slug`, `position` (INTEGER, user-defined ordering; new fifos get `MAX(position)+1`), `seq` (INTEGER, last-issued item position; starts at 0), `created_at`, `updated_at`. Listed by `position` ASC, then `id` ASC.
-- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public id for done/fail/skip/status/retry), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `todo` | `lock` | `done` | `fail` | `skip`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `reason` (TEXT, optional one-line metadata supplied to done/fail/skip — recommended convention is "what happened" for triage; NULL otherwise; cleared on retry), `created_at`, `updated_at`.
+- **fifos**: `id` (PK), `user_id` (FK), `ulid` (UNIQUE), `name`, `slug`, `position` (INTEGER, user-defined ordering; new fifos get `MAX(position)+1`), `seq` (INTEGER, last-issued item position; starts at 0), `max_retries` (INTEGER `>= 1`, default matches `DEFAULT_FIFO_MAX_RETRIES` in `src/lib/web_constants.ts`; after this many failure outcomes, `fail` transitions the item to `skip` — see queue logic), `created_at`, `updated_at`. Listed by `position` ASC, then `id` ASC.
+- **items**: `id` (PK auto-increment), `fifo_id` (FK), `ulid` (UNIQUE — public ULID for `done`/`fail`/`skip`/`status`/`retry` paths and JSON `id`), `position` (INTEGER, from `fifos.seq`), `status` (TEXT: `todo` | `lock` | `done` | `fail` | `skip`), `data` (TEXT, the item body), `locked_until` (INTEGER unix-seconds, NULL except when status=`lock`), `reason` (TEXT, optional one-line metadata supplied to done/fail/skip — recommended convention is "what happened" for triage; NULL otherwise; cleared on retry), `created_at`, `updated_at`.
 - **idempotency**: `fifo_id` (FK), `key` (TEXT), `item_id` (FK → items.id), `created_at`. **PRIMARY KEY (fifo_id, key)**. Used to dedupe `POST /push` with `Idempotency-Key`. Rows older than 1h are swept by the same purger as done/fail items.
 
 Indexes:
@@ -202,7 +202,8 @@ src/
   cli/
     main.ts
   lib/
-    constants.ts
+    constants.ts        # server + re-exports web_constants (uses process.env)
+    web_constants.ts    # browser-safe literals — import from here in `src/web/`
     mode.ts
     db.ts
     queue.ts            # push/pop/pull/done/fail/skip/retry core (single-file SQL)
@@ -299,10 +300,10 @@ Then proceed with the actual pop/pull select. Lazy, no cron, no races.
 
 | Route | Description |
 |---|---|
-| `GET /` | List all fifos for the user, sorted by `position` ASC then `id` ASC. Each row: `{ name, slug, ulid, position, counts: { todo, lock, done, fail, skip }, created_at }`. |
-| `POST /` | Create fifo. Body: `{ name }`. New fifo gets `position = MAX(position)+1`. Returns `{ slug, ulid, webhook_url, position }`. **2 credits.** |
-| `GET /:slug[?status=<s>]` | Fifo detail. `?status=` filters items by status (`todo` \| `lock` \| `done` \| `fail` \| `skip`); default `todo`. Order: oldest first for `todo`/`lock`, newest first for `done`/`fail`/`skip`. Content-negotiated HTML / JSON / YAML. |
-| `PATCH /:slug` | Rename. Body: `{ name }` (required). Returns updated fifo row. |
+| `GET /` | List all fifos for the user, sorted by `position` ASC then `id` ASC. Each row: `{ name, slug, ulid, position, max_retries, counts: { todo, lock, done, fail, skip }, created_at }`. |
+| `POST /` | Create fifo. Body: `{ name, max_retries? }` (`max_retries` optional integer, validated inclusive range per server constants; default if omitted). New fifo gets `position = MAX(position)+1`. Returns `{ slug, ulid, webhook_url, position, max_retries }`. **2 credits.** |
+| `GET /:slug[?status=<s>]` | Fifo detail. `?status=` filters items by status (`todo` \| `lock` \| `done` \| `fail` \| `skip`); default `todo`. Order: oldest first for `todo`/`lock`, newest first for `done`/`fail`/`skip`. JSON/YAML includes `max_retries`. Content-negotiated HTML / JSON / YAML. |
+| `PATCH /:slug` | Update fifo. Body: `{ name?, max_retries? }` — at least one field required. `max_retries` same validation as create. Returns `{ name, slug, old_slug? }` when renamed, and/or `{ max_retries }` when the cap changed. |
 | `PATCH /f/reorder` | Reorder fifos. Body: `{ order: [slug, …] }` — full ordered list of the user's fifo slugs. Server writes `position = i` for each. Returns `{ ok: true }`. Same pattern as todos `PATCH /t/reorder`. |
 | `DELETE /:slug` | Delete fifo and all items. |
 | `GET /f/fifos/items` | SSE stream: emits `fifos` event with same JSON as `GET /` whenever any of the user's fifos changes (push, status change, purge, rename). |
@@ -312,18 +313,18 @@ Then proceed with the actual pop/pull select. Lazy, no cron, no races.
 
 All under `/w/:ulid/`. The ULID is the only credential. CORS open to `*`.
 
-In every response below, the `id` field is the **item ULID** (26 chars, Crockford base32), not the integer PK. Same value used in `done/:id`, `fail/:id`, `skip/:id`, `retry/:id`, `status/:id` paths.
+In every response below, the `id` field is the **item ULID** (26 chars, Crockford base32), not the integer PK. The trailing path segment after `done`/`fail`/`skip`/`retry`/`status` is that same ULID (routes spell the parameter `:id`, but it is never the integer PK).
 
 | Verb & path | Body / Headers | Returns | Cost |
 |---|---|---|---|
-| `POST /w/:ulid/push` | item body. Optional `Idempotency-Key: <s>`. | `201 { id, position, created_at }`. With idempotency key seen in last 1h: `200` with the **same** id, no charge. | **0.01** |
+| `POST /w/:ulid/push` | item body. Optional `Idempotency-Key: <s>`. | `201 { id, position, created_at }`. With idempotency key seen in last 1h: `200` with the **same** ULID (`id` in JSON), no charge. | **0.01** |
 | `POST /w/:ulid/pop` | — | `200 { id, data, position, created_at }` (status now `done`) or `204` if empty | **0.01** |
 | `POST /w/:ulid/pull[?lock=<dur>]` | — | `200 { id, data, position, created_at, locked_until }` (status now `lock`) or `204` if empty. `lock` accepts seconds (`600`), or `1800s`/`30m`/`1h`. Clamped to `[10s, 1h]`. Default 30 min. | **0.01** |
-| `POST /w/:ulid/done/:id` | optional `text/plain` body = reason (max 1 KiB; whitespace-only treated as no reason). | `200 { id, status: "done", reason }`. `400 invalid_request` if body exceeds 1 KiB. `404` if id not currently `lock`. | **0.01** |
-| `POST /w/:ulid/fail/:id` | optional `text/plain` body = failure reason (same contract as `done`). | `200 { id, status: "fail", reason }`. Same errors. **Retryable**. | **0.01** |
+| `POST /w/:ulid/done/:id` | optional `text/plain` body = reason (max 1 KiB; whitespace-only treated as no reason). | `200 { id, status: "done", reason }`. `400 invalid_request` if body exceeds 1 KiB. `404` if item not currently `lock`. | **0.01** |
+| `POST /w/:ulid/fail/:id` | optional `text/plain` body = failure reason (same contract as `done`). | `200 { id, status: "fail" \| "skip", reason, exhausted_retries }` — `exhausted_retries` is `true` when the server escalated to **`skip`** because fail attempts reached `max_retries`. Same HTTP errors. **`retry`** / **`skip`** on SSE `change` may include `exhausted_retries: true` in that case. | **0.01** |
 | `POST /w/:ulid/skip/:id` | optional `text/plain` body = skip reason (same contract as `done`). | `200 { id, status: "skip", reason }`. Same errors. **Terminal** — `retry` refuses. | **0.01** |
-| `POST /w/:ulid/retry/:id` | — | `200 { id, status: "todo", position }` — moves a `done`/`fail` item back to `todo` at the tail (new position from `seq`, same id). `404` if id unknown; `409 { error: "wrong_status" }` if currently `todo`, `lock`, or `skip`. | **0.01** |
-| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, reason, created_at, updated_at }`. `reason` only set on `done`/`fail`/`skip`. `404` if id unknown. | free |
+| `POST /w/:ulid/retry/:id` | — | `200 { id, status: "todo", position }` — moves a `done`/`fail` item back to `todo` at the tail (new position from `seq`, same ULID / JSON `id`). `404` if item ulid unknown; `409 { error: "wrong_status" }` if currently `todo`, `lock`, or `skip`. | **0.01** |
+| `GET /w/:ulid/status/:id` | — | `200 { id, status, position, reason, created_at, updated_at }`. `reason` only set on `done`/`fail`/`skip`. `404` if item ulid unknown. | free |
 | `GET /w/:ulid/peek?n=5` | — | `200 { items: [...] }` — up to N oldest `todo` items, no status change. Default n=10, max 100. | free |
 | `GET /w/:ulid/info` | — | `200 { name, slug, ulid, counts: {...}, total }` | free |
 | `GET /w/:ulid/list/:status?n=5[&reason=<substr>]` | — | `200 { items: [...] }`. `todo`/`lock`: oldest first. `done`/`fail`/`skip`: newest first. Default n=10, max 100. `reason` is a case-insensitive substring filter on the `reason` column; only honored on terminal statuses (`done`/`fail`/`skip`), ignored otherwise. SQL `%`/`_`/`\\` in the substring are matched literally. | free |
@@ -379,8 +380,8 @@ Same shape as todos: `{ "error": "<code>", "reason": "<detail>" }` for 4xx. Code
 | 402 | `payment_required` | — | No Legendum account linked, hosted mode. |
 | 404 | `not_found` | `ulid` | Unknown webhook ULID. |
 | 404 | `not_found` | `fifo` | Unknown slug on `/:slug`. |
-| 404 | `not_locked` | — | `done`/`fail`/`skip` on an id not currently `lock`. |
-| 404 | `not_found` | `item` | `status`/`retry` on unknown item id. |
+| 404 | `not_locked` | — | `done`/`fail`/`skip` when the item for that ULID is not currently `lock`. |
+| 404 | `not_found` | `item` | `status`/`retry` on unknown item ulid. |
 | 409 | `wrong_status` | — | `retry` on an item that's currently `todo`, `lock`, or `skip`. |
 | 429 | `fifo_full` | — | Push and capacity-pressure purge couldn't free space. |
 | 429 | `charge_failed` | — | Legendum tab settle failed. |
@@ -395,7 +396,7 @@ Identical mechanism to todos. Different rates.
 |---|---|
 | Fifo creation | 2 credits |
 | Webhook write (push, pop, pull, done, fail, skip, retry) | **0.01** credits |
-| Idempotent push (key already seen within 1h) | Free — returns the original item id |
+| Idempotent push (key already seen within 1h) | Free — returns the original ULID (`id` in JSON) |
 | Webhook read (peek, info, list, items) | Free |
 | Authenticated routes | Free |
 
@@ -511,7 +512,7 @@ Same as todos: `workbox-build` `generateSW()`, `cacheId` from `package.json` ver
 - [ ] **SSE**: `/w/:ulid/items` and `/f/fifos/items` with ring-buffer + `Last-Event-ID` replay + `resync` fallback (§6.5). 25s keep-alives.
 - [ ] **Purger**: time-based sweep on 1h interval (§5.1). Batched 100 deletes.
 - [ ] **Billing**: Legendum tabs — 2 cr per fifo create, 0.01 per webhook write, 2-cr threshold. No billing in self-hosted.
-- [ ] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <id>`, `retry <id>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid|url>` flag. Documented exit codes 0/1/2.
+- [ ] **CLI**: `push` (arg or stdin = one item; `--key` for idempotency), `pop`, `pop --block [--timeout N]` (SSE), `pull`/`done`/`fail`/`skip` (with `.fifos-lock`), `status <ulid>`, `retry <ulid>`, `peek`, `info` (`--json`/`--yaml`), `list <status>`, `open`, `skill`, `help`. Global `-f`/`--fifo <ulid|url>` flag. Documented exit codes 0/1/2.
 - [ ] **Frontend — layout**: top bar, install dialog, mobile-first.
 - [ ] **Frontend — screens**: login, fifos home (drag to reorder via `PATCH /f/reorder`, swipe-delete), fifo detail (status filter, no item drag).
 - [ ] **Frontend — live**: subscribe to `/w/:ulid/items` on detail; `/f/fifos/items` on home.

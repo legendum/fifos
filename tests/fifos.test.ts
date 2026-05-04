@@ -84,6 +84,7 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.ulid.length).toBeGreaterThanOrEqual(20);
     expect(body.webhook_url).toBe(`/w/${body.ulid}`);
     expect(body.position).toBe(0);
+    expect(body.max_retries).toBe(3);
   });
 
   test("POST / slugifies a multi-word name", async () => {
@@ -119,6 +120,7 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.fifos.length).toBe(2);
     expect(body.fifos[0].slug).toBe("builds");
     expect(body.fifos[0].position).toBe(0);
+    expect(body.fifos[0].max_retries).toBe(3);
     expect(body.fifos[0].counts).toEqual({
       todo: 0,
       lock: 0,
@@ -136,6 +138,7 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.slug).toBe("builds");
     expect(body.counts).toEqual({ todo: 0, lock: 0, done: 0, fail: 0, skip: 0 });
     expect(body.items).toEqual([]);
+    expect(body.max_retries).toBe(3);
   });
 
   test("GET /:slug 404s for unknown slug", async () => {
@@ -171,6 +174,36 @@ describe("Fifos CRUD — self-hosted", () => {
     });
     expect(status).toBe(400);
     expect(body.error).toBe("invalid_request");
+  });
+
+  test("PATCH /:slug updates only max_retries", async () => {
+    const { status, body } = await jpatch("/builds-ci", { max_retries: 9 });
+    expect(status).toBe(200);
+    expect(body.max_retries).toBe(9);
+    expect(body.slug).toBeUndefined();
+    const detail = await jget("/builds-ci");
+    expect(detail.body.max_retries).toBe(9);
+    await jpatch("/builds-ci", { max_retries: 3 });
+  });
+
+  test("PATCH /:slug rejects max_retries below 1", async () => {
+    const { status } = await jpatch("/builds-ci", { max_retries: 0 });
+    expect(status).toBe(400);
+  });
+
+  test("POST / accepts optional max_retries", async () => {
+    const { status, body } = await jpost("/", {
+      name: "retry-policy",
+      max_retries: 7,
+    });
+    expect(status).toBe(201);
+    expect(body.max_retries).toBe(7);
+    await jdelete("/retry-policy");
+  });
+
+  test("POST / rejects max_retries below 1", async () => {
+    const { status } = await jpost("/", { name: "bad-retries", max_retries: 0 });
+    expect(status).toBe(400);
   });
 
   test("PATCH /f/reorder writes positions in the given order", async () => {
@@ -277,6 +310,8 @@ describe("Fifos CRUD — self-hosted", () => {
         body: r,
       });
       expect(failRes.status).toBe(200);
+      const fr = (await failRes.json()) as { exhausted_retries: boolean };
+      expect(fr.exhausted_retries).toBe(false);
     }
 
     // Substring match — case-insensitive, returns 2 items.
@@ -335,5 +370,41 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(failRes.status).toBe(400);
     const j = (await failRes.json()) as { error: string };
     expect(j.error).toBe("invalid_request");
+  });
+
+  test("POST /w/:ulid/fail sets exhausted_retries when auto-skipping", async () => {
+    await jpatch("/builds-ci", { max_retries: 1 });
+    const list = await jget("/");
+    const entry = list.body.fifos.find(
+      (f: { slug: string }) => f.slug === "builds-ci",
+    );
+    expect(entry).toBeTruthy();
+    const fifoUlid = entry.ulid as string;
+
+    const pushRes = await fetch(`${base}/w/${fifoUlid}/push`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "one-shot",
+    });
+    expect(pushRes.status).toBe(201);
+
+    const pullRes = await fetch(`${base}/w/${fifoUlid}/pull`, {
+      method: "POST",
+    });
+    expect(pullRes.status).toBe(200);
+    const pulled = (await pullRes.json()) as { id: string };
+
+    const failRes = await fetch(`${base}/w/${fifoUlid}/fail/${pulled.id}`, {
+      method: "POST",
+    });
+    expect(failRes.status).toBe(200);
+    const fj = (await failRes.json()) as {
+      status: string;
+      exhausted_retries: boolean;
+    };
+    expect(fj.status).toBe("skip");
+    expect(fj.exhausted_retries).toBe(true);
+
+    await jpatch("/builds-ci", { max_retries: 3 });
   });
 });

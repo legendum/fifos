@@ -11,11 +11,12 @@ export type FifoEntry = {
   slug: string;
   ulid: string;
   position: number;
+  max_retries: number;
   counts: StatusCounts;
   created_at: number;
 };
 
-export type ItemStatus = "todo" | "lock" | "done" | "fail" | "skip";
+export type { ItemStatus } from "../lib/web_constants.js";
 
 export type Item = {
   id: string;

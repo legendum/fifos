@@ -12,13 +12,11 @@
  *     that want the same logic outside a tx.
  */
 import { getFifosPayload } from "../api/handlers/fifos.js";
-import { FIFOS_RETENTION_SECONDS } from "./constants.js";
+import { FIFOS_RETENTION_SECONDS, PURGE_BATCH_SIZE } from "./constants.js";
 import { getDb } from "./db.js";
 import { publish, publishUserFifos } from "./sse.js";
 
 export { pressurePurge } from "./queue.js";
-
-const BATCH = 100;
 
 export type SweepResult = {
   itemsDeleted: number;
@@ -52,7 +50,7 @@ export function sweepRetention(): SweepResult {
             AND i.updated_at < strftime('%s','now') - ?
           LIMIT ?`,
       )
-      .all(FIFOS_RETENTION_SECONDS, BATCH) as DoomedRow[];
+      .all(FIFOS_RETENTION_SECONDS, PURGE_BATCH_SIZE) as DoomedRow[];
     if (rows.length === 0) break;
 
     const ids = rows.map((r) => r.id);
@@ -92,7 +90,7 @@ export function sweepRetention(): SweepResult {
            WHERE created_at < strftime('%s','now') - 3600
            LIMIT ?
         )`,
-      BATCH,
+      PURGE_BATCH_SIZE,
     );
     if (result.changes === 0) break;
     idempotencyDeleted += result.changes;

@@ -26,6 +26,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { ITEM_STATUSES_PIPE, isItemStatus } from "../lib/web_constants.js";
+
 const LOCK_FILE = ".fifos-lock";
 // 26-char ULID, Crockford base32. First char is 0-7 (high 2 bits of a 48-bit
 // ms timestamp are zero until ~year 10889).
@@ -481,7 +483,7 @@ async function finishLocked(
 async function cmdStatus(baseUrl: string, parsed: Parsed): Promise<number> {
   const id = parsed.positional[0];
   if (!id) {
-    console.error("status: missing item id");
+    console.error("status: missing item ulid");
     return 2;
   }
   const res = await request(baseUrl, "GET", `/status/${id}`);
@@ -495,7 +497,7 @@ async function cmdStatus(baseUrl: string, parsed: Parsed): Promise<number> {
 async function cmdRetry(baseUrl: string, parsed: Parsed): Promise<number> {
   const id = parsed.positional[0];
   if (!id) {
-    console.error("retry: missing item id");
+    console.error("retry: missing item ulid");
     return 2;
   }
   const res = await request(baseUrl, "POST", `/retry/${id}`);
@@ -529,8 +531,8 @@ async function cmdPeek(baseUrl: string, parsed: Parsed): Promise<number> {
 
 async function cmdList(baseUrl: string, parsed: Parsed): Promise<number> {
   const status = parsed.positional[0];
-  if (!status || !["todo", "lock", "done", "fail", "skip"].includes(status)) {
-    console.error("list: status must be one of todo|lock|done|fail|skip");
+  if (!status || !isItemStatus(status)) {
+    console.error(`list: status must be one of ${ITEM_STATUSES_PIPE}`);
     return 2;
   }
   const n = Number(parsed.flags.get("items") ?? 10);
@@ -611,8 +613,8 @@ Usage:
   fifos done [reason...]         mark the locked item done; optional one-line reason (positional or stdin, max 1 KiB)
   fifos fail [reason...]         mark it fail (retryable); same reason rules
   fifos skip [reason...]         mark it skip (terminal — retry refused); same reason rules
-  fifos status <id>              one item's state
-  fifos retry <id>               move done/fail back to todo at the tail (skip is terminal)
+  fifos status <ulid>            one item's state
+  fifos retry <ulid>             move done/fail back to todo at the tail (skip is terminal)
   fifos peek [--items=N]         oldest N todo items
   fifos info                     counts summary
   fifos list <todo|lock|done|fail|skip> [--items=N]

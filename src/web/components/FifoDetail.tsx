@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
 import CheckIcon from "./CheckIcon";
 import CopyIcon from "./CopyIcon";
@@ -14,18 +15,18 @@ type Props = {
   filterQuery: string;
 };
 
-const STATUSES: ItemStatus[] = ["todo", "lock", "done", "fail", "skip"];
 const PUSH_TRUNCATE_LEN = 240;
 
-function relativeAge(unixSec: number): string {
-  const ms = Date.now() - unixSec * 1000;
-  if (ms < 60_000) return "just now";
-  const m = Math.floor(ms / 60_000);
-  if (m < 60) return `${m}m`;
+/** Relative time since last item update (`updated_at`, unix seconds). */
+function relativeUpdatedAgo(unixSec: number): string {
+  const sec = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+  if (sec < 60) return "just now";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  return `${d}d`;
+  return `${d}d ago`;
 }
 
 function truncate(s: string, n = PUSH_TRUNCATE_LEN): string {
@@ -52,6 +53,8 @@ export default function FifoDetail({
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addBarRef = useRef<HTMLDivElement>(null);
   const online = useOnlineStatus();
+  /** Bumps every minute so "Xm ago" / "Xh ago" labels stay current. */
+  const [ageTick, setAgeTick] = useState(0);
 
   usePageTitle(`${fifo.name} — Fifos`);
   useKeyboardSafeBottom(addBarRef);
@@ -91,6 +94,11 @@ export default function FifoDetail({
   useEffect(() => {
     void fetchDetail(status);
   }, [fetchDetail, status]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setAgeTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Live updates from the public per-fifo SSE stream.
   useEffect(() => {
@@ -191,7 +199,7 @@ export default function FifoDetail({
       </div>
 
       <div className="status-chips">
-        {STATUSES.map((s) => (
+        {ITEM_STATUSES.map((s) => (
           <button
             type="button"
             key={s}
@@ -203,7 +211,7 @@ export default function FifoDetail({
         ))}
       </div>
 
-      <ul className="list">
+      <ul className="list" data-age-tick={ageTick}>
         {filtered.map((it) => (
           <li key={it.id} className="item-row" onClick={() => setExpanded(it)}>
             <div className="item-row-main">
@@ -211,7 +219,12 @@ export default function FifoDetail({
                 {it.status}
               </span>
               <span className="item-pos">#{it.position}</span>
-              <span className="item-age">{relativeAge(it.created_at)}</span>
+              <span
+                className="item-age"
+                title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
+              >
+                {relativeUpdatedAgo(it.updated_at)}
+              </span>
             </div>
             <div className="item-body">{truncate(it.data)}</div>
             {it.reason && (
@@ -283,6 +296,18 @@ export default function FifoDetail({
             <div className="dialog-header">
               <h2 style={{ margin: 0, fontSize: 16 }}>
                 #{expanded.position} · {expanded.status}
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 13,
+                    fontWeight: 400,
+                    color: "#94a3b8",
+                    marginTop: 4,
+                  }}
+                  title={`Updated ${new Date(expanded.updated_at * 1000).toLocaleString()}`}
+                >
+                  {relativeUpdatedAgo(expanded.updated_at)}
+                </span>
               </h2>
               <button
                 className="dialog-close"
