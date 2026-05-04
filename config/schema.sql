@@ -25,8 +25,9 @@ CREATE TABLE IF NOT EXISTS users (
 --   per the published spec); the public webhook credential at /w/<ulid>.
 -- position: user-defined ordering on the home screen (drag to reorder).
 -- seq: monotonic per-fifo counter; the next pushed item gets seq+1 as its position.
--- max_retries: fail() transitions to skip after this many failure outcomes
---   (see queue.retry_count); must be >= 1. Default matches DEFAULT_FIFO_MAX_RETRIES in src/lib/web_constants.ts.
+-- max_retries: number of retries permitted before fail() auto-transitions to skip
+--   (compared against items.retry_count); must be >= 1. Default matches
+--   DEFAULT_FIFO_MAX_RETRIES in src/lib/web_constants.ts.
 CREATE TABLE IF NOT EXISTS fifos (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id),

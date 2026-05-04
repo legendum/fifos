@@ -400,26 +400,40 @@ describe("Fifos CRUD — self-hosted", () => {
     const pushRes = await fetch(`${base}/w/${fifoUlid}/push`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: "one-shot",
+      body: "two-strikes",
     });
     expect(pushRes.status).toBe(201);
 
-    const pullRes = await fetch(`${base}/w/${fifoUlid}/pull`, {
+    const pull1 = await fetch(`${base}/w/${fifoUlid}/pull`, { method: "POST" });
+    const pulled1 = (await pull1.json()) as { id: string };
+    const fail1 = await fetch(`${base}/w/${fifoUlid}/fail/${pulled1.id}`, {
       method: "POST",
     });
-    expect(pullRes.status).toBe(200);
-    const pulled = (await pullRes.json()) as { id: string };
-
-    const failRes = await fetch(`${base}/w/${fifoUlid}/fail/${pulled.id}`, {
-      method: "POST",
-    });
-    expect(failRes.status).toBe(200);
-    const fj = (await failRes.json()) as {
+    expect(fail1.status).toBe(200);
+    const fj1 = (await fail1.json()) as {
       status: string;
       exhausted_retries: boolean;
     };
-    expect(fj.status).toBe("skip");
-    expect(fj.exhausted_retries).toBe(true);
+    expect(fj1.status).toBe("fail");
+    expect(fj1.exhausted_retries).toBe(false);
+
+    const retryRes = await fetch(`${base}/w/${fifoUlid}/retry/${pulled1.id}`, {
+      method: "POST",
+    });
+    expect(retryRes.status).toBe(200);
+
+    const pull2 = await fetch(`${base}/w/${fifoUlid}/pull`, { method: "POST" });
+    const pulled2 = (await pull2.json()) as { id: string };
+    const fail2 = await fetch(`${base}/w/${fifoUlid}/fail/${pulled2.id}`, {
+      method: "POST",
+    });
+    expect(fail2.status).toBe(200);
+    const fj2 = (await fail2.json()) as {
+      status: string;
+      exhausted_retries: boolean;
+    };
+    expect(fj2.status).toBe("skip");
+    expect(fj2.exhausted_retries).toBe(true);
 
     await jpatch("/builds-ci", { max_retries: 3 });
   });

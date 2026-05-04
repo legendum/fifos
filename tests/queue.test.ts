@@ -486,18 +486,16 @@ describe("queue.fail max_retries → skip", () => {
     expect(out!.row.retry_count).toBe(0);
   });
 
-  test("third fail becomes skip after two retries (default max_retries=3)", async () => {
+  test("fourth fail becomes skip after three retries (default max_retries=3)", async () => {
     const f = await mkFifo("fail-to-skip-default");
     q.push(f.id, "x");
-    let pulled = q.pull(f.id, 60)!;
-    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
-    expect(q.retry(f.id, pulled.id).ok).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      const pulled = q.pull(f.id, 60)!;
+      expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+      expect(q.retry(f.id, pulled.id).ok).toBe(true);
+    }
 
-    pulled = q.pull(f.id, 60)!;
-    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
-    expect(q.retry(f.id, pulled.id).ok).toBe(true);
-
-    pulled = q.pull(f.id, 60)!;
+    const pulled = q.pull(f.id, 60)!;
     const terminal = q.fail(f.id, pulled.id, "last strike");
     expect(terminal).not.toBeNull();
     expect(terminal!.row.status).toBe("skip");
@@ -508,23 +506,28 @@ describe("queue.fail max_retries → skip", () => {
     if (!r.ok) expect(r.reason).toBe("wrong_status");
   });
 
-  test("max_retries=1: first fail becomes skip", async () => {
+  test("max_retries=1: second fail (after one retry) becomes skip", async () => {
     const f = await mkFifo("fail-skip-mr1", 1);
     q.push(f.id, "x");
-    const pulled = q.pull(f.id, 60)!;
+    let pulled = q.pull(f.id, 60)!;
+    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+    expect(q.retry(f.id, pulled.id).ok).toBe(true);
+    pulled = q.pull(f.id, 60)!;
     const out = q.fail(f.id, pulled.id);
     expect(out).not.toBeNull();
     expect(out!.row.status).toBe("skip");
     expect(out!.exhausted_retries).toBe(true);
   });
 
-  test("max_retries=2: second fail after one retry becomes skip", async () => {
+  test("max_retries=2: third fail after two retries becomes skip", async () => {
     const f = await mkFifo("fail-skip-mr2", 2);
     q.push(f.id, "x");
-    let pulled = q.pull(f.id, 60)!;
-    expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
-    expect(q.retry(f.id, pulled.id).ok).toBe(true);
-    pulled = q.pull(f.id, 60)!;
+    for (let i = 0; i < 2; i++) {
+      const pulled = q.pull(f.id, 60)!;
+      expect(q.fail(f.id, pulled.id)!.row.status).toBe("fail");
+      expect(q.retry(f.id, pulled.id).ok).toBe(true);
+    }
+    const pulled = q.pull(f.id, 60)!;
     const out = q.fail(f.id, pulled.id);
     expect(out!.row.status).toBe("skip");
     expect(out!.exhausted_retries).toBe(true);

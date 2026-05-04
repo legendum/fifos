@@ -12,7 +12,6 @@
  * has actually pulled it back to todo.
  */
 import {
-  DEFAULT_FIFO_MAX_RETRIES,
   FIFOS_LOCK_TIMEOUT_SECONDS,
   IDEMPOTENCY_WINDOW_SECONDS,
   LOCK_TIMEOUT_MAX_SECONDS,
@@ -357,8 +356,9 @@ export function skip(
 
 /**
  * `retry_count` counts how many times an item has been returned to `todo` via
- * `retry()` (not raw failure count). `fail()` compares `retry_count + 1` to
- * `fifos.max_retries` to decide `fail` vs auto-`skip`.
+ * `retry()`. `fail()` checks `retry_count >= max_retries` to decide `fail` vs
+ * auto-`skip` — i.e. `max_retries=N` lets the user retry N times before the
+ * (N+1)th fail auto-skips.
  */
 function finishLockedInner(
   fifoId: number,
@@ -386,9 +386,8 @@ function finishLockedInner(
     if (!row) return null;
     if (row.status !== "lock") return null;
 
-    const maxRetries = row.max_retries ?? DEFAULT_FIFO_MAX_RETRIES;
     const nextStatus: ItemStatus =
-      next === "fail" && row.retry_count + 1 >= maxRetries ? "skip" : next;
+      next === "fail" && row.retry_count >= row.max_retries ? "skip" : next;
     const exhausted_retries = next === "fail" && nextStatus === "skip";
 
     db.run(
