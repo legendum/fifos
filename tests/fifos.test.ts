@@ -190,6 +190,106 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(body.error).toBe("invalid_request");
   });
 
+  test("GET /:slug paginates todo with cursor", async () => {
+    const { status: creSt, body: cre } = await jpost("/", {
+      name: "Pagination cursor fifo",
+    });
+    expect(creSt).toBe(201);
+    const slug = cre.slug as string;
+    const fifoUlid = cre.ulid as string;
+    try {
+      for (let i = 1; i <= 4; i++) {
+        const { status } = await pushItem(fifoUlid, `p${i}`);
+        expect(status).toBe(201);
+      }
+      const p1 = await jget(`/${slug}?status=todo&limit=2`);
+      expect(p1.status).toBe(200);
+      expect(p1.body.items.length).toBe(2);
+      expect(p1.body.has_more).toBe(true);
+      const lastPos = p1.body.items[1].position as number;
+
+      const p2 = await jget(`/${slug}?status=todo&limit=2&cursor=${lastPos}`);
+      expect(p2.status).toBe(200);
+      expect(p2.body.items.length).toBe(2);
+      expect(p2.body.has_more).toBe(false);
+
+    } finally {
+      await jdelete(`/${slug}`);
+    }
+  });
+
+  test("GET /:slug paginates done newest-first with cursor", async () => {
+    const { status: creSt, body: cre } = await jpost("/", {
+      name: "Done cursor fifo",
+    });
+    expect(creSt).toBe(201);
+    const slug = cre.slug as string;
+    const fifoUlid = cre.ulid as string;
+    try {
+      for (let i = 1; i <= 4; i++) {
+        expect((await pushItem(fifoUlid, `done-${i}`)).status).toBe(201);
+      }
+      for (let i = 0; i < 4; i++) {
+        const res = await fetch(`${base}/w/${fifoUlid}/pop`, { method: "POST" });
+        expect(res.status).toBe(200);
+      }
+      const p1 = await jget(`/${slug}?status=done&limit=2`);
+      expect(p1.status).toBe(200);
+      expect(p1.body.items.length).toBe(2);
+      expect((p1.body.items[0] as { position: number }).position).toBeGreaterThan(
+        (p1.body.items[1] as { position: number }).position,
+      );
+      expect(p1.body.has_more).toBe(true);
+
+      const lastPos = (p1.body.items[1] as { position: number }).position;
+      const p2 = await jget(`/${slug}?status=done&limit=2&cursor=${lastPos}`);
+      expect(p2.status).toBe(200);
+      expect(p2.body.items.length).toBe(2);
+      expect(p2.body.has_more).toBe(false);
+
+      expect((p2.body.items[0] as { position: number }).position).toBeGreaterThan(
+        (p2.body.items[1] as { position: number }).position,
+      );
+    } finally {
+      await jdelete(`/${slug}`);
+    }
+  });
+
+  test("GET /:slug ignores non-numeric cursor; limit=0 uses default chunk size", async () => {
+    const { status: creSt, body: cre } = await jpost("/", {
+      name: "Fifo detail edge cases",
+    });
+    expect(creSt).toBe(201);
+    const slug = cre.slug as string;
+    const fifoUlid = cre.ulid as string;
+    try {
+      for (let i = 1; i <= 4; i++) {
+        expect((await pushItem(fifoUlid, `e${i}`)).status).toBe(201);
+      }
+
+      const page = await jget(`/${slug}?status=todo&limit=2`);
+      expect(page.status).toBe(200);
+      expect(page.body.has_more).toBe(true);
+
+      const junkCursor = await jget(`/${slug}?status=todo&limit=2&cursor=junk`);
+      expect(junkCursor.status).toBe(200);
+      expect(junkCursor.body.items).toEqual(page.body.items);
+      expect(junkCursor.body.has_more).toEqual(page.body.has_more);
+
+      const maxWindow = await jget(`/${slug}?status=todo&limit=0`);
+      expect(maxWindow.status).toBe(200);
+      expect(maxWindow.body.items.length).toBe(4);
+      expect(maxWindow.body.has_more).toBe(false);
+
+      const bigLimit = await jget(`/${slug}?status=todo&limit=500`);
+      expect(bigLimit.status).toBe(200);
+      expect(bigLimit.body.items.length).toBe(4);
+      expect(bigLimit.body.has_more).toBe(false);
+    } finally {
+      await jdelete(`/${slug}`);
+    }
+  });
+
   test("PATCH /:slug renames and updates slug", async () => {
     const { status, body } = await jpatch("/builds", { name: "Builds CI" });
     expect(status).toBe(200);
@@ -243,8 +343,8 @@ describe("Fifos CRUD — self-hosted", () => {
   });
 
   test("PATCH /f/reorder writes positions in the given order", async () => {
-    const before = await jget("/");
-    expect(before.body.fifos[0].slug).toBe("my-first-fifo");
+    const prior = await jget("/");
+    expect(prior.body.fifos[0].slug).toBe("my-first-fifo");
 
     const { status, body } = await jpatch("/f/reorder", {
       order: ["my-deploy-queue", "builds-ci", "my-first-fifo"],

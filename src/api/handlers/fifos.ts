@@ -266,22 +266,24 @@ export function getFifo(
   const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
   const limit =
     Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 100;
-  const beforeRaw = url.searchParams.get("before");
-  const before =
-    beforeRaw !== null && Number.isFinite(Number.parseInt(beforeRaw, 10))
-      ? Number.parseInt(beforeRaw, 10)
-      : null;
+  /** Keyset pagination: pass the last-visible row's `position` after `has_more`. */
+  let cursor: number | null = null;
+  const cursorStr = url.searchParams.get("cursor");
+  if (cursorStr !== null && cursorStr !== "") {
+    const n = Number.parseInt(cursorStr, 10);
+    if (Number.isFinite(n)) cursor = n;
+  }
   const q = url.searchParams.get("q")?.trim() ?? "";
 
   const cursorClause =
-    before !== null
+    cursor !== null
       ? newestFirst
         ? " AND position < ?"
         : " AND position > ?"
       : "";
   const qClause = q ? " AND lower(data) LIKE '%' || lower(?) || '%'" : "";
   const params: Array<string | number> = [row.id, statusParam];
-  if (before !== null) params.push(before);
+  if (cursor !== null) params.push(cursor);
   if (q) params.push(q);
   params.push(limit + 1);
 

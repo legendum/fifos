@@ -76,10 +76,10 @@ export default function FifoDetail({
   }, [filterQuery]);
 
   const fetchPage = useCallback(
-    async (s: ItemStatus, q: string, before: number | null) => {
+    async (s: ItemStatus, q: string, cursor: number | null) => {
       const params = new URLSearchParams({ status: s, limit: "100" });
       if (q) params.set("q", q);
-      if (before !== null) params.set("before", String(before));
+      if (cursor !== null) params.set("cursor", String(cursor));
       const r = await fetch(`/${fifo.slug}.json?${params.toString()}`, {
         credentials: "include",
         headers: { Accept: "application/json" },
