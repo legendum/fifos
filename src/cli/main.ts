@@ -403,6 +403,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function cmdPull(baseUrl: string, parsed: Parsed): Promise<number> {
+  const existing = readLockFile();
+  if (existing) {
+    process.stderr.write(
+      `pull: .fifos-lock already holds ${existing} — finish it with 'fifos done|fail|skip' (or delete .fifos-lock to abandon) before pulling another\n`,
+    );
+    return 2;
+  }
   const lock = parsed.flags.get("lock");
   const path =
     typeof lock === "string"
