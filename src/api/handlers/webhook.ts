@@ -1,3 +1,5 @@
+import { YAML } from "bun";
+
 import { chargeWebhookWrite } from "../../lib/billing.js";
 import { MAX_ITEM_BYTES, MAX_REASON_BYTES } from "../../lib/constants.js";
 import { getDb } from "../../lib/db.js";
@@ -308,8 +310,7 @@ function negotiate(req: Request): "json" | "yaml" {
 
 function respond(req: Request, payload: unknown, status = 200): Response {
   if (negotiate(req) === "yaml") {
-    const yaml = require("yaml");
-    return new Response(yaml.stringify(payload), {
+    return new Response(YAML.stringify(payload, null, 2), {
       status,
       headers: { "Content-Type": "application/yaml" },
     });

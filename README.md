@@ -151,4 +151,4 @@ Mobile-first PWA at `/`. Drag to reorder fifos, swipe-left to delete, tap to dri
 
 ## Stack
 
-Bun + SQLite (WAL, FK on) + React 18 (no build framework, hand-rolled `Bun.build`) + workbox-build SW. Single-process; SSE replay via in-memory ring. Zero runtime deps beyond `@dnd-kit`, `react`, `yaml`, and `workbox-build`.
+Bun + SQLite (WAL, FK on) + React 18 (no build framework, hand-rolled `Bun.build`) + workbox-build SW. Single-process; SSE replay via in-memory ring. Runtime deps are `@dnd-kit` + `react`; YAML responses use Bun’s built-in [`YAML`](https://bun.sh/docs/api/yaml).

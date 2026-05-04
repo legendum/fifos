@@ -1,3 +1,5 @@
+import { YAML } from "bun";
+
 import { chargeFifoCreate } from "../../lib/billing.js";
 import {
   DEFAULT_FIFO_MAX_RETRIES,
@@ -283,10 +285,7 @@ export function getFifo(
 
   if (format === "json") return json(payload);
   if (format === "yaml") {
-    // yaml.stringify is loaded via `yaml` dep (Phase 0). Lazy require to avoid
-    // top-level import cost when JSON is the common case.
-    const yaml = require("yaml");
-    return new Response(yaml.stringify(payload), {
+    return new Response(YAML.stringify(payload, null, 2), {
       headers: { "Content-Type": "application/yaml" },
     });
   }

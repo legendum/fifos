@@ -26,6 +26,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { YAML } from "bun";
+
 import { ITEM_STATUSES_PIPE, isItemStatus } from "../lib/web_constants.js";
 
 const LOCK_FILE = ".fifos-lock";
@@ -180,8 +182,7 @@ function dieFromHttp(res: FetchResult): never {
 function formatOutput(payload: unknown, format: Format): string {
   if (format === "json") return JSON.stringify(payload, null, 2);
   if (format === "yaml") {
-    const yaml = require("yaml");
-    return yaml.stringify(payload);
+    return YAML.stringify(payload, null, 2);
   }
   return formatText(payload);
 }
