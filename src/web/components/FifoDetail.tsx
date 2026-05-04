@@ -63,36 +63,78 @@ export default function FifoDetail({
     [counts],
   );
 
-  const filtered = useMemo(() => {
-    const q = filterQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) => it.data.toLowerCase().includes(q));
-  }, [items, filterQuery]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState(filterQuery);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const fetchDetail = useCallback(
-    async (s: ItemStatus) => {
-      try {
-        const r = await fetch(`/${fifo.slug}.json?status=${s}`, {
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!r.ok) return;
-        const data = (await r.json()) as {
-          counts: StatusCounts;
-          items: Item[];
-        };
-        setCounts(data.counts);
-        setItems(data.items);
-      } catch {
-        /* offline */
-      }
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(filterQuery), 150);
+    return () => window.clearTimeout(t);
+  }, [filterQuery]);
+
+  const fetchPage = useCallback(
+    async (s: ItemStatus, q: string, before: number | null) => {
+      const params = new URLSearchParams({ status: s, limit: "100" });
+      if (q) params.set("q", q);
+      if (before !== null) params.set("before", String(before));
+      const r = await fetch(`/${fifo.slug}.json?${params.toString()}`, {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!r.ok) return null;
+      return (await r.json()) as {
+        counts: StatusCounts;
+        items: Item[];
+        has_more: boolean;
+      };
     },
     [fifo.slug],
   );
 
+  const fetchFirstPage = useCallback(
+    async (s: ItemStatus, q: string) => {
+      try {
+        const data = await fetchPage(s, q, null);
+        if (!data) return;
+        setCounts(data.counts);
+        setItems(data.items);
+        setHasMore(data.has_more);
+      } catch {
+        /* offline */
+      }
+    },
+    [fetchPage],
+  );
+
   useEffect(() => {
-    void fetchDetail(status);
-  }, [fetchDetail, status]);
+    void fetchFirstPage(status, debouncedQuery);
+  }, [fetchFirstPage, status, debouncedQuery]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || loadingMore) return;
+    const io = new IntersectionObserver(
+      async (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setLoadingMore(true);
+        try {
+          const last = items[items.length - 1];
+          if (!last) return;
+          const data = await fetchPage(status, debouncedQuery, last.position);
+          if (data) {
+            setItems((prev) => [...prev, ...data.items]);
+            setHasMore(data.has_more);
+          }
+        } finally {
+          setLoadingMore(false);
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, items, fetchPage, status, debouncedQuery]);
 
   useEffect(() => {
     const id = window.setInterval(() => setAgeTick((n) => n + 1), 60_000);
@@ -103,13 +145,13 @@ export default function FifoDetail({
   useEffect(() => {
     if (!online) return;
     const es = new EventSource(`/w/${fifo.ulid}/items`);
-    const refetch = () => void fetchDetail(status);
+    const refetch = () => void fetchFirstPage(status, debouncedQuery);
     es.addEventListener("push", refetch);
     es.addEventListener("change", refetch);
     es.addEventListener("purge", refetch);
     es.addEventListener("resync", refetch);
     return () => es.close();
-  }, [online, fifo.ulid, fetchDetail, status]);
+  }, [online, fifo.ulid, fetchFirstPage, status, debouncedQuery]);
 
   const copyWebhookUrl = () => {
     if (typeof navigator === "undefined") return;
@@ -140,7 +182,7 @@ export default function FifoDetail({
       }
       setPushText("");
       setPushing(false);
-      await fetchDetail(status);
+      await fetchFirstPage(status, debouncedQuery);
       window.dispatchEvent(new Event("fifos-credits-refresh"));
     } catch {
       setPushError("Network error");
@@ -242,7 +284,7 @@ export default function FifoDetail({
       </div>
 
       <ul className="list" data-age-tick={ageTick}>
-        {filtered.map((it) => (
+        {items.map((it) => (
           <li key={it.id} className="item-row" onClick={() => setExpanded(it)}>
             <div className="item-row-main">
               <span className={`item-status item-status--${it.status}`}>
@@ -264,13 +306,15 @@ export default function FifoDetail({
         ))}
       </ul>
 
-      {filtered.length === 0 && (
+      {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
+
+      {items.length === 0 && (
         <p style={{ padding: 16, color: "#64748b", textAlign: "center" }}>
           {total === 0
             ? "Empty fifo. Tap + to push an item."
-            : items.length === 0
-              ? `No ${status} items.`
-              : "No items match the filter."}
+            : debouncedQuery
+              ? "No items match the filter."
+              : `No ${status} items.`}
         </p>
       )}
 

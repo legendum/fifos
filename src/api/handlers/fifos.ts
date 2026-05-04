@@ -262,15 +262,41 @@ export function getFifo(
 
   const newestFirst =
     statusParam === "done" || statusParam === "fail" || statusParam === "skip";
-  const items = db
+
+  const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 100;
+  const beforeRaw = url.searchParams.get("before");
+  const before =
+    beforeRaw !== null && Number.isFinite(Number.parseInt(beforeRaw, 10))
+      ? Number.parseInt(beforeRaw, 10)
+      : null;
+  const q = url.searchParams.get("q")?.trim() ?? "";
+
+  const cursorClause =
+    before !== null
+      ? newestFirst
+        ? " AND position < ?"
+        : " AND position > ?"
+      : "";
+  const qClause = q ? " AND lower(data) LIKE '%' || lower(?) || '%'" : "";
+  const params: Array<string | number> = [row.id, statusParam];
+  if (before !== null) params.push(before);
+  if (q) params.push(q);
+  params.push(limit + 1);
+
+  const fetched = db
     .query(
       `SELECT ulid AS id, position, status, data, locked_until, reason,
               created_at, updated_at
          FROM items
-        WHERE fifo_id = ? AND status = ?
-        ORDER BY position ${newestFirst ? "DESC" : "ASC"}`,
+        WHERE fifo_id = ? AND status = ?${cursorClause}${qClause}
+        ORDER BY position ${newestFirst ? "DESC" : "ASC"}
+        LIMIT ?`,
     )
-    .all(row.id, statusParam);
+    .all(...params) as unknown[];
+  const has_more = fetched.length > limit;
+  const items = has_more ? fetched.slice(0, limit) : fetched;
 
   const counts = getCountsByFifo([row.id]).get(row.id) ?? emptyCounts();
 
@@ -281,6 +307,7 @@ export function getFifo(
     max_retries: row.max_retries,
     counts,
     items,
+    has_more,
   };
 
   if (format === "json") return json(payload);
