@@ -4,6 +4,7 @@ Use the `fifos` CLI to push/pop work items on a FIFO queue.
 
 ## Setup
 - Each project's queue is configured by `FIFOS_WEBHOOK` in `.env`.
+- Invoke the **`fifos`** binary (e.g. `~/.bun/bin/fifos` once linked with `bun link -g`; ensure that dir is on your `PATH` as `fifos`). Run from the project dir so `.env` is picked up unless you export `FIFOS_WEBHOOK`.
 - For multi-queue services, pass `-f <ulid|url>` per command instead.
 
 ## Verbs
