@@ -418,7 +418,9 @@ function CountsPill({
       {cells.map((c, i) => (
         <Fragment key={`l-${c.letter}`}>
           {i > 0 && <span className="cat-count-between" aria-hidden />}
-          <span className="cat-count-letter">{c.letter}</span>
+          <span className="cat-count-letter" title={c.label}>
+            {c.letter}
+          </span>
         </Fragment>
       ))}
       {cells.map((c, i) => (

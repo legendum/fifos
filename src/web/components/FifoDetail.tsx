@@ -311,7 +311,7 @@ export default function FifoDetail({
                   copied ? "Copied to clipboard" : "Click to copy webhook URL"
                 }
               >
-                <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
+                <span className="fifo-webhook-text">{fifo.ulid}</span>
                 {copied ? (
                   <span className="copied-badge">Copied!</span>
                 ) : (
