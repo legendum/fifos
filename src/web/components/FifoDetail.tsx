@@ -3,7 +3,6 @@ import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
 import CopyIcon from "./CopyIcon";
 import { useEscape } from "./useEscape";
-import { useKeyboardSafeBottom } from "./useKeyboardSafeBottom";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { usePageTitle } from "./usePageTitle";
 
@@ -50,14 +49,52 @@ export default function FifoDetail({
   const [editName, setEditName] = useState(fifo.name);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const addBarRef = useRef<HTMLDivElement>(null);
+  const detailBodyRef = useRef<HTMLDivElement>(null);
+  const bottomDockRef = useRef<HTMLDivElement>(null);
+  const pushTextareaRef = useRef<HTMLTextAreaElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const online = useOnlineStatus();
   /** Bumps every minute so "Xm ago" / "Xh ago" labels stay current. */
   const [ageTick, setAgeTick] = useState(0);
 
   usePageTitle(`${fifo.name} — Fifos`);
-  useKeyboardSafeBottom(addBarRef);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const syncDetailBody = () => {
+      const el = detailBodyRef.current;
+      if (el) el.style.transform = `translateY(${vv.offsetTop}px)`;
+    };
+    const syncDockBottom = () => {
+      const el = bottomDockRef.current;
+      if (!el) return;
+      el.style.bottom = `${Math.max(0, window.innerHeight - vv.offsetTop - vv.height)}px`;
+    };
+    const update = () => {
+      syncDetailBody();
+      syncDockBottom();
+    };
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    update();
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      if (detailBodyRef.current) detailBodyRef.current.style.transform = "";
+      if (bottomDockRef.current) bottomDockRef.current.style.bottom = "";
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pushing) return;
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        pushTextareaRef.current?.focus({ preventScroll: true });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pushing]);
 
   const total = useMemo(
     () => counts.todo + counts.lock + counts.done + counts.fail + counts.skip,
@@ -227,158 +264,173 @@ export default function FifoDetail({
 
   return (
     <div className="screen screen--detail">
-      <div className="fifo-detail-fixed-top">
-        <div className="fifo-detail-header">
-          <button className="back-btn" onClick={onBack}>
-            ◀ Back
-          </button>
-          <div className="fifo-detail-titles">
-            {editingName ? (
-              <input
-                ref={nameInputRef}
-                type="text"
-                className="fifo-detail-name"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onBlur={saveRename}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    (e.target as HTMLInputElement).blur();
-                  } else if (e.key === "Escape") {
-                    cancelEditName();
-                    nameInputRef.current?.blur();
-                  }
-                }}
-                autoFocus
-              />
-            ) : (
+      <div ref={detailBodyRef} className="fifo-detail-body">
+        <div className="fifo-detail-fixed-top">
+          <div className="fifo-detail-header">
+            <button className="back-btn" onClick={onBack}>
+              ◀ Back
+            </button>
+            <div className="fifo-detail-titles">
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  className="fifo-detail-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={saveRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      (e.target as HTMLInputElement).blur();
+                    } else if (e.key === "Escape") {
+                      cancelEditName();
+                      nameInputRef.current?.blur();
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="fifo-detail-name"
+                  title="Click to rename fifo"
+                  onClick={() => {
+                    setEditName(fifo.name);
+                    setEditingName(true);
+                  }}
+                >
+                  {fifo.name}
+                </button>
+              )}
               <button
                 type="button"
-                className="fifo-detail-name"
-                title="Click to rename fifo"
-                onClick={() => {
-                  setEditName(fifo.name);
-                  setEditingName(true);
-                }}
+                className="fifo-webhook-copy"
+                onClick={copyWebhookUrl}
+                title={
+                  copied ? "Copied to clipboard" : "Click to copy webhook URL"
+                }
               >
-                {fifo.name}
+                <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
+                {copied ? (
+                  <span className="copied-badge">Copied!</span>
+                ) : (
+                  <CopyIcon />
+                )}
               </button>
-            )}
-            <button
-              type="button"
-              className="fifo-webhook-copy"
-              onClick={copyWebhookUrl}
-              title={
-                copied ? "Copied to clipboard" : "Click to copy webhook URL"
-              }
-            >
-              <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
-              {copied ? (
-                <span className="copied-badge">Copied!</span>
-              ) : (
-                <CopyIcon />
-              )}
-            </button>
+            </div>
+          </div>
+
+          <div className="status-chips">
+            {ITEM_STATUSES.map((s) => (
+              <button
+                type="button"
+                key={s}
+                className={`chip${status === s ? " chip--active" : ""}`}
+                onClick={() => setStatus(s)}
+              >
+                {s} <span className="chip-count">{counts[s]}</span>
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="status-chips">
-          {ITEM_STATUSES.map((s) => (
-            <button
-              type="button"
-              key={s}
-              className={`chip${status === s ? " chip--active" : ""}`}
-              onClick={() => setStatus(s)}
-            >
-              {s} <span className="chip-count">{counts[s]}</span>
-            </button>
-          ))}
+        <div ref={listScrollRef} className="fifo-detail-scroll">
+          <ul className="list" data-age-tick={ageTick}>
+            {items.map((it) => (
+              <li
+                key={it.id}
+                className="item-row"
+                onClick={() => setExpanded(it)}
+              >
+                <div className="item-row-main">
+                  <span className={`item-status item-status--${it.status}`}>
+                    {it.status}
+                  </span>
+                  <span className="item-pos">#{it.position}</span>
+                  <span
+                    className="item-age"
+                    title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
+                  >
+                    {relativeUpdatedAgo(it.updated_at)}
+                  </span>
+                </div>
+                <div className="item-body">{truncate(it.data)}</div>
+                {it.reason && (
+                  <div className="item-reason">{truncate(it.reason)}</div>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {hasMore && (
+            <div ref={sentinelRef} className="list-scroll-sentinel" />
+          )}
+
+          {items.length === 0 && (
+            <p className="empty-state-hint">
+              {total === 0
+                ? "Empty fifo. Tap + to push an item."
+                : debouncedQuery
+                  ? "No items match the filter."
+                  : `No ${status} items.`}
+            </p>
+          )}
         </div>
       </div>
 
-      <div ref={listScrollRef} className="fifo-detail-scroll">
-        <ul className="list" data-age-tick={ageTick}>
-          {items.map((it) => (
-            <li
-              key={it.id}
-              className="item-row"
-              onClick={() => setExpanded(it)}
-            >
-              <div className="item-row-main">
-                <span className={`item-status item-status--${it.status}`}>
-                  {it.status}
-                </span>
-                <span className="item-pos">#{it.position}</span>
-                <span
-                  className="item-age"
-                  title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
+      <div ref={bottomDockRef} className="fifo-add-dock">
+        {pushing ? (
+          <div className="fifo-add-dock-inner fifo-add-dock-inner--form">
+            <div className="form">
+              <textarea
+                ref={pushTextareaRef}
+                className="input"
+                placeholder="Item body (text — JSON, Markdown, plain)"
+                value={pushText}
+                onChange={(e) => setPushText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
+                    submitPush();
+                }}
+                rows={6}
+              />
+              {pushError && <p className="form-error">{pushError}</p>}
+              <div className="form-button-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={submitPush}
+                  disabled={!pushText.trim()}
                 >
-                  {relativeUpdatedAgo(it.updated_at)}
-                </span>
+                  Push
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setPushing(false);
+                    setPushText("");
+                    setPushError(null);
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
-              <div className="item-body">{truncate(it.data)}</div>
-              {it.reason && (
-                <div className="item-reason">{truncate(it.reason)}</div>
-              )}
-            </li>
-          ))}
-        </ul>
-
-        {hasMore && <div ref={sentinelRef} className="list-scroll-sentinel" />}
-
-        {items.length === 0 && (
-          <p className="empty-state-hint">
-            {total === 0
-              ? "Empty fifo. Tap + to push an item."
-              : debouncedQuery
-                ? "No items match the filter."
-                : `No ${status} items.`}
-          </p>
+            </div>
+          </div>
+        ) : (
+          <div className="fifo-add-dock-inner fifo-add-dock-inner--fab">
+            <button
+              type="button"
+              className="fab"
+              onClick={() => setPushing(true)}
+            >
+              +
+            </button>
+          </div>
         )}
       </div>
-
-      {pushing ? (
-        <div className="form" ref={addBarRef}>
-          <textarea
-            className="input"
-            placeholder="Item body (text — JSON, Markdown, plain)"
-            value={pushText}
-            onChange={(e) => setPushText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitPush();
-            }}
-            rows={6}
-            autoFocus
-          />
-          {pushError && <p className="form-error">{pushError}</p>}
-          <div className="form-button-row">
-            <button
-              type="button"
-              className="btn"
-              onClick={submitPush}
-              disabled={!pushText.trim()}
-            >
-              Push
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                setPushing(false);
-                setPushText("");
-                setPushError(null);
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button type="button" className="fab" onClick={() => setPushing(true)}>
-          +
-        </button>
-      )}
 
       {expanded && (
         <div className="dialog-overlay" onClick={() => setExpanded(null)}>
