@@ -207,7 +207,6 @@ export function subscribe(
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
       // Nginx: stop buffering streamed frames (SSE must flush through immediately).
       "X-Accel-Buffering": "no",
     },
