@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
 import CopyIcon from "./CopyIcon";
+import { useEscape } from "./useEscape";
 import { useKeyboardSafeBottom } from "./useKeyboardSafeBottom";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { usePageTitle } from "./usePageTitle";
@@ -155,17 +156,7 @@ export default function FifoDetail({
     return () => es.close();
   }, [online, fifo.ulid, fetchFirstPage, status, debouncedQuery]);
 
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      setExpanded(null);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [expanded]);
+  useEscape(!!expanded, () => setExpanded(null));
 
   const copyWebhookUrl = () => {
     if (typeof navigator === "undefined") return;

@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./fetchWithAuth";
+import "./theme";
 
 window.addEventListener("load", () => {
   if ("serviceWorker" in navigator) {

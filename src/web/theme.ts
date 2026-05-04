@@ -1,8 +1,32 @@
 export type ThemePref = "system" | "dark" | "light";
 
+const STORAGE_KEY = "fifos.theme";
+
 let currentPref: ThemePref = "system";
+let userTouched = false;
 let mql: MediaQueryList | null = null;
 let mqlListener: (() => void) | null = null;
+
+function isThemePref(v: unknown): v is ThemePref {
+  return v === "system" || v === "dark" || v === "light";
+}
+
+function readStoredPref(): ThemePref {
+  if (typeof localStorage === "undefined") return "system";
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return isThemePref(raw) ? raw : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function writeStoredPref(pref: ThemePref): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, pref);
+  } catch {}
+}
 
 function resolveAndApply(pref: ThemePref): void {
   if (typeof document === "undefined") return;
@@ -24,13 +48,18 @@ function resolveAndApply(pref: ThemePref): void {
   }
 }
 
-function isThemePref(v: unknown): v is ThemePref {
-  return v === "system" || v === "dark" || v === "light";
-}
+// Paint synchronously at module import — runs before React mounts, so
+// the cached preference is applied before first render.
+currentPref = readStoredPref();
+resolveAndApply(currentPref);
 
-export function initTheme(pref: unknown): void {
-  currentPref = isThemePref(pref) ? pref : "system";
-  resolveAndApply(currentPref);
+export function reconcileTheme(serverPref: unknown): void {
+  if (userTouched) return;
+  const next = isThemePref(serverPref) ? serverPref : "system";
+  if (next === currentPref) return;
+  currentPref = next;
+  writeStoredPref(next);
+  resolveAndApply(next);
 }
 
 export function getThemePref(): ThemePref {
@@ -38,7 +67,9 @@ export function getThemePref(): ThemePref {
 }
 
 export function setThemePref(pref: ThemePref): void {
+  userTouched = true;
   currentPref = pref;
+  writeStoredPref(pref);
   resolveAndApply(pref);
   fetch("/f/settings/me", {
     method: "PATCH",

@@ -86,6 +86,18 @@ describe("Fifos CRUD — self-hosted", () => {
     expect(again.body.meta?.theme).toBe("light");
   });
 
+  test("PATCH /f/settings/me drops unknown keys and bad theme values", async () => {
+    // The previous test left meta.theme = "light"; sanitization should drop the
+    // bad theme + extra keys but leave the existing valid value intact.
+    const { status, body } = await jpatch("/f/settings/me", {
+      meta: { theme: "neon", evil: "<script>", nested: { a: 1 } },
+    });
+    expect(status).toBe(200);
+    expect(body.meta).toEqual({ theme: "light" });
+    const again = await jget("/f/settings/me");
+    expect(again.body.meta).toEqual({ theme: "light" });
+  });
+
   test("starter fifo is seeded for the local user", async () => {
     const { status, body } = await jget("/");
     expect(status).toBe(200);

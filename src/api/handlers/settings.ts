@@ -4,6 +4,18 @@ import { json } from "../json.js";
 
 type UserMeta = Record<string, unknown>;
 
+const ALLOWED_THEMES = new Set(["system", "light", "dark"]);
+
+function sanitizeMeta(input: unknown): UserMeta {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const record = input as Record<string, unknown>;
+  const out: UserMeta = {};
+  if (typeof record.theme === "string" && ALLOWED_THEMES.has(record.theme)) {
+    out.theme = record.theme;
+  }
+  return out;
+}
+
 function readUserRow(
   userId: number,
 ): { legendum_token: string | null; meta: string } | undefined {
@@ -54,7 +66,7 @@ export async function patchMe(req: Request, userId: number): Promise<Response> {
 
   const merged: UserMeta = {
     ...parseMeta(row.meta),
-    ...(body.meta as UserMeta),
+    ...sanitizeMeta(body.meta),
   };
   const db = getDb();
   db.run(

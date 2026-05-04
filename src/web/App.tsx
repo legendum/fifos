@@ -5,7 +5,7 @@ import Login from "./components/Login";
 import TopBar from "./components/TopBar";
 import { setUnauthorizedHandler } from "./fetchWithAuth";
 import { type FifoDetailJson, fifoFromDetailJson } from "./fifoFromJson";
-import { initTheme } from "./theme";
+import { reconcileTheme } from "./theme";
 import type { FifoEntry } from "./types";
 
 type User = {
@@ -62,7 +62,7 @@ export default function App() {
         return;
       }
       const data = (await res.json()) as User;
-      initTheme(data.meta?.theme);
+      reconcileTheme(data.meta?.theme);
       setUser(data);
     } catch {
       setUser(null);

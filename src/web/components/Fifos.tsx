@@ -16,6 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Fragment,
   type RefObject,
   useCallback,
   useEffect,
@@ -26,6 +27,7 @@ import type { FifoEntry } from "../types";
 import DragHandle from "./DragHandle";
 import EditTextDialog from "./EditTextDialog";
 import ThemeChooser from "./ThemeChooser";
+import { useEscape } from "./useEscape";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { useSwipeToReveal } from "./useSwipeToReveal";
 
@@ -134,17 +136,7 @@ export default function Fifos({
     return () => es.close();
   }, [visible, online]);
 
-  useEffect(() => {
-    if (!deleteFifo) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      setDeleteFifo(null);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [deleteFifo]);
+  useEscape(!!deleteFifo, () => setDeleteFifo(null));
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -418,44 +410,22 @@ function CountsPill({
       className="cat-count"
       title={cells.map((c) => `${c.label} ${c.value}`).join(" · ")}
     >
-      {cells.flatMap((c, i) =>
-        i === 0
-          ? [
-              <span key={`${c.letter}-ltr`} className="cat-count-letter">
-                {c.letter}
-              </span>,
-            ]
-          : [
-              <span
-                key={`sep-l-${c.letter}`}
-                className="cat-count-between"
-                aria-hidden
-              />,
-              <span key={`${c.letter}-ltr`} className="cat-count-letter">
-                {c.letter}
-              </span>,
-            ],
-      )}
-      {cells.flatMap((c, i) =>
-        i === 0
-          ? [
-              <span key={`${c.letter}-num`} className="cat-count-value">
-                {c.value}
-              </span>,
-            ]
-          : [
-              <span
-                key={`sep-v-${c.letter}`}
-                className="cat-count-between"
-                aria-hidden
-              >
-                {"\u2022"}
-              </span>,
-              <span key={`${c.letter}-num`} className="cat-count-value">
-                {c.value}
-              </span>,
-            ],
-      )}
+      {cells.map((c, i) => (
+        <Fragment key={`l-${c.letter}`}>
+          {i > 0 && <span className="cat-count-between" aria-hidden />}
+          <span className="cat-count-letter">{c.letter}</span>
+        </Fragment>
+      ))}
+      {cells.map((c, i) => (
+        <Fragment key={`v-${c.letter}`}>
+          {i > 0 && (
+            <span className="cat-count-between" aria-hidden>
+              {"\u2022"}
+            </span>
+          )}
+          <span className="cat-count-value">{c.value}</span>
+        </Fragment>
+      ))}
     </span>
   );
 }
