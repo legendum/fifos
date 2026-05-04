@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   email          TEXT NOT NULL UNIQUE,
   legendum_token TEXT,
+  meta           TEXT NOT NULL DEFAULT '{}',
   created_at     INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );
 

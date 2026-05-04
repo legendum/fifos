@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ITEM_STATUSES } from "../../lib/web_constants.js";
 import type { FifoEntry, Item, ItemStatus, StatusCounts } from "../types";
 import CopyIcon from "./CopyIcon";
+import ThemeChooser from "./ThemeChooser";
 import { useKeyboardSafeBottom } from "./useKeyboardSafeBottom";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { usePageTitle } from "./usePageTitle";
@@ -67,6 +68,7 @@ export default function FifoDetail({
   const [loadingMore, setLoadingMore] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState(filterQuery);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQuery(filterQuery), 150);
@@ -112,8 +114,9 @@ export default function FifoDetail({
   }, [fetchFirstPage, status, debouncedQuery]);
 
   useEffect(() => {
+    const rootEl = listScrollRef.current;
     const el = sentinelRef.current;
-    if (!el || !hasMore || loadingMore) return;
+    if (!rootEl || !el || !hasMore || loadingMore) return;
     const io = new IntersectionObserver(
       async (entries) => {
         if (!entries[0]?.isIntersecting) return;
@@ -130,7 +133,7 @@ export default function FifoDetail({
           setLoadingMore(false);
         }
       },
-      { rootMargin: "200px" },
+      { root: rootEl, rootMargin: "200px" },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -152,6 +155,18 @@ export default function FifoDetail({
     es.addEventListener("resync", refetch);
     return () => es.close();
   }, [online, fifo.ulid, fetchFirstPage, status, debouncedQuery]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setExpanded(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [expanded]);
 
   const copyWebhookUrl = () => {
     if (typeof navigator === "undefined") return;
@@ -216,107 +231,122 @@ export default function FifoDetail({
   };
 
   return (
-    <div className="screen">
-      <div className="fifo-detail-header">
-        <button className="back-btn" onClick={onBack}>
-          ◀ Back
-        </button>
-        <div className="fifo-detail-titles">
-          {editingName ? (
-            <input
-              ref={nameInputRef}
-              type="text"
-              className="fifo-detail-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={saveRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  (e.target as HTMLInputElement).blur();
-                } else if (e.key === "Escape") {
-                  cancelEditName();
-                  nameInputRef.current?.blur();
-                }
-              }}
-              autoFocus
-            />
-          ) : (
+    <div className="screen screen--detail">
+      <div className="fifo-detail-fixed-top">
+        <div className="fifo-detail-header">
+          <button className="back-btn" onClick={onBack}>
+            ◀ Back
+          </button>
+          <div className="fifo-detail-titles">
+            {editingName ? (
+              <input
+                ref={nameInputRef}
+                type="text"
+                className="fifo-detail-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={saveRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (e.target as HTMLInputElement).blur();
+                  } else if (e.key === "Escape") {
+                    cancelEditName();
+                    nameInputRef.current?.blur();
+                  }
+                }}
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                className="fifo-detail-name"
+                title="Click to rename fifo"
+                onClick={() => {
+                  setEditName(fifo.name);
+                  setEditingName(true);
+                }}
+              >
+                {fifo.name}
+              </button>
+            )}
             <button
               type="button"
-              className="fifo-detail-name"
-              title="Click to rename fifo"
-              onClick={() => {
-                setEditName(fifo.name);
-                setEditingName(true);
-              }}
+              className="fifo-webhook-copy"
+              onClick={copyWebhookUrl}
+              title={
+                copied ? "Copied to clipboard" : "Click to copy webhook URL"
+              }
             >
-              {fifo.name}
+              <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
+              {copied ? (
+                <span className="copied-badge">Copied!</span>
+              ) : (
+                <CopyIcon />
+              )}
             </button>
-          )}
-          <button
-            type="button"
-            className="fifo-webhook-copy"
-            onClick={copyWebhookUrl}
-            title={copied ? "Copied to clipboard" : "Click to copy webhook URL"}
-          >
-            <span className="fifo-webhook-text">/w/{fifo.ulid}</span>
-            {copied ? (
-              <span className="copied-badge">Copied!</span>
-            ) : (
-              <CopyIcon />
-            )}
-          </button>
+          </div>
+        </div>
+
+        <div className="status-chips">
+          {ITEM_STATUSES.map((s) => (
+            <button
+              type="button"
+              key={s}
+              className={`chip${status === s ? " chip--active" : ""}`}
+              onClick={() => setStatus(s)}
+            >
+              {s} <span className="chip-count">{counts[s]}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="status-chips">
-        {ITEM_STATUSES.map((s) => (
-          <button
-            type="button"
-            key={s}
-            className={`chip${status === s ? " chip--active" : ""}`}
-            onClick={() => setStatus(s)}
-          >
-            {s} <span className="chip-count">{counts[s]}</span>
-          </button>
-        ))}
+      <div ref={listScrollRef} className="fifo-detail-scroll">
+        <ul className="list" data-age-tick={ageTick}>
+          {items.map((it) => (
+            <li
+              key={it.id}
+              className="item-row"
+              onClick={() => setExpanded(it)}
+            >
+              <div className="item-row-main">
+                <span className={`item-status item-status--${it.status}`}>
+                  {it.status}
+                </span>
+                <span className="item-pos">#{it.position}</span>
+                <span
+                  className="item-age"
+                  title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
+                >
+                  {relativeUpdatedAgo(it.updated_at)}
+                </span>
+              </div>
+              <div className="item-body">{truncate(it.data)}</div>
+              {it.reason && (
+                <div className="item-reason">{truncate(it.reason)}</div>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        {hasMore && <div ref={sentinelRef} className="list-scroll-sentinel" />}
+
+        {items.length === 0 && (
+          <p className="empty-state-hint">
+            {total === 0
+              ? "Empty fifo. Tap + to push an item."
+              : debouncedQuery
+                ? "No items match the filter."
+                : `No ${status} items.`}
+          </p>
+        )}
+
+        <div className="links-list-theme">
+          <p className="links-list-theme-label">Appearance</p>
+          <ThemeChooser />
+        </div>
       </div>
-
-      <ul className="list" data-age-tick={ageTick}>
-        {items.map((it) => (
-          <li key={it.id} className="item-row" onClick={() => setExpanded(it)}>
-            <div className="item-row-main">
-              <span className={`item-status item-status--${it.status}`}>
-                {it.status}
-              </span>
-              <span className="item-pos">#{it.position}</span>
-              <span
-                className="item-age"
-                title={`Updated ${new Date(it.updated_at * 1000).toLocaleString()}`}
-              >
-                {relativeUpdatedAgo(it.updated_at)}
-              </span>
-            </div>
-            <div className="item-body">{truncate(it.data)}</div>
-            {it.reason && (
-              <div className="item-reason">{truncate(it.reason)}</div>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
-
-      {items.length === 0 && (
-        <p style={{ padding: 16, color: "#64748b", textAlign: "center" }}>
-          {total === 0
-            ? "Empty fifo. Tap + to push an item."
-            : debouncedQuery
-              ? "No items match the filter."
-              : `No ${status} items.`}
-        </p>
-      )}
 
       {pushing ? (
         <div className="form" ref={addBarRef}>
@@ -331,12 +361,8 @@ export default function FifoDetail({
             rows={6}
             autoFocus
           />
-          {pushError && (
-            <p style={{ color: "#f87171", fontSize: 13, margin: 0 }}>
-              {pushError}
-            </p>
-          )}
-          <div style={{ display: "flex", gap: 8 }}>
+          {pushError && <p className="form-error">{pushError}</p>}
+          <div className="form-button-row">
             <button
               type="button"
               className="btn"
@@ -368,16 +394,10 @@ export default function FifoDetail({
         <div className="dialog-overlay" onClick={() => setExpanded(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h2 style={{ margin: 0, fontSize: 16 }}>
+              <h2 className="dialog-heading-title dialog-heading-title--compact">
                 #{expanded.position} · {expanded.status}
                 <span
-                  style={{
-                    display: "block",
-                    fontSize: 13,
-                    fontWeight: 400,
-                    color: "#94a3b8",
-                    marginTop: 4,
-                  }}
+                  className="dialog-heading-meta"
                   title={`Updated ${new Date(expanded.updated_at * 1000).toLocaleString()}`}
                 >
                   {relativeUpdatedAgo(expanded.updated_at)}
@@ -391,15 +411,13 @@ export default function FifoDetail({
               </button>
             </div>
             <div className="dialog-body">
-              <pre className="dialog-code" style={{ whiteSpace: "pre-wrap" }}>
+              <pre className="dialog-code dialog-code--pre-wrap">
                 {expanded.data}
               </pre>
               {expanded.reason && (
                 <div className="dialog-reason">
                   <div className="dialog-reason-label">Reason</div>
-                  <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                    {expanded.reason}
-                  </pre>
+                  <pre className="dialog-pre-pre-wrap">{expanded.reason}</pre>
                 </div>
               )}
             </div>

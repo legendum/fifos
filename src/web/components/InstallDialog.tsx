@@ -42,7 +42,7 @@ export default function InstallDialog({ onClose }: Props) {
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 style={{ margin: 0, fontSize: 18 }}>Install the fifos CLI</h2>
+          <h2 className="dialog-heading-title">Install the fifos CLI</h2>
           <button className="dialog-close" onClick={onClose}>
             &times;
           </button>

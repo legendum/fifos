@@ -350,6 +350,9 @@ export default {
     if (path === "/f/settings/me" && method === "GET") {
       return settingsHandlers.getMe(userId);
     }
+    if (path === "/f/settings/me" && method === "PATCH") {
+      return await settingsHandlers.patchMe(req, userId);
+    }
 
     if (path === "/f/fifos/items" && method === "GET") {
       return fifosHandlers.getFifosStream(req, userId);

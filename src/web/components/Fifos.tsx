@@ -15,8 +15,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { RefObject } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { FifoEntry } from "../types";
 import DragHandle from "./DragHandle";
 import EditTextDialog from "./EditTextDialog";
@@ -99,13 +104,14 @@ export default function Fifos({
     if (visible) fetchFifos();
   }, [visible, fetchFifos]);
 
-  // Move focus to filter on home so typing narrows immediately.
+  // Move focus to filter when the home list is shown (including returning from a fifo).
   useEffect(() => {
+    if (!visible) return;
     const id = requestAnimationFrame(() => {
       filterInputRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(id);
-  }, [filterInputRef]);
+  }, [visible, filterInputRef]);
 
   const online = useOnlineStatus();
 
@@ -126,6 +132,18 @@ export default function Fifos({
     });
     return () => es.close();
   }, [visible, online]);
+
+  useEffect(() => {
+    if (!deleteFifo) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDeleteFifo(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [deleteFifo]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -253,9 +271,9 @@ export default function Fifos({
           <DragOverlay>
             {draggedEntry ? (
               <div className="drag-overlay">
-                <div className="list-item" style={{ borderBottom: "none" }}>
+                <div className="list-item list-item--no-border">
                   <DragHandle />
-                  <div className="list-item-content">
+                  <div className="list-item-content list-item-content--indent">
                     <div className="list-item-title">{draggedEntry.name}</div>
                   </div>
                   <CountsPill counts={draggedEntry.counts} />
@@ -267,15 +285,11 @@ export default function Fifos({
       )}
 
       {fifos.length === 0 && !creating && (
-        <p style={{ padding: 16, color: "#64748b", textAlign: "center" }}>
-          No fifos yet. Tap + to create one.
-        </p>
+        <p className="empty-state-hint">No fifos yet. Tap + to create one.</p>
       )}
 
       {fifos.length > 0 && filterActive && filteredFifos.length === 0 && (
-        <p style={{ padding: 16, color: "#64748b", textAlign: "center" }}>
-          No matches.
-        </p>
+        <p className="empty-state-hint">No matches.</p>
       )}
 
       {creating && (
@@ -288,10 +302,8 @@ export default function Fifos({
             onKeyDown={(e) => e.key === "Enter" && handleCreate()}
             autoFocus
           />
-          {error && (
-            <p style={{ color: "#f87171", fontSize: 13, margin: 0 }}>{error}</p>
-          )}
-          <div style={{ display: "flex", gap: 8 }}>
+          {error && <p className="form-error">{error}</p>}
+          <div className="form-button-row">
             <button
               type="button"
               className="btn"
@@ -340,16 +352,10 @@ export default function Fifos({
       )}
 
       {deleteFifo && (
-        <div
-          className="dialog-overlay"
-          onClick={() => setDeleteFifo(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setDeleteFifo(null);
-          }}
-        >
+        <div className="dialog-overlay" onClick={() => setDeleteFifo(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-header">
-              <h2 style={{ margin: 0, fontSize: 18 }}>Delete fifo?</h2>
+              <h2 className="dialog-heading-title">Delete fifo?</h2>
               <button
                 type="button"
                 className="dialog-close"
@@ -359,17 +365,11 @@ export default function Fifos({
               </button>
             </div>
             <div className="dialog-body">
-              <p style={{ margin: "0 0 16px" }}>
+              <p className="dialog-lede">
                 Permanently delete <strong>{deleteFifo.name}</strong> and all
                 its items?
               </p>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  justifyContent: "flex-end",
-                }}
-              >
+              <div className="form-button-row form-button-row--end">
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -412,12 +412,44 @@ function CountsPill({
       className="cat-count"
       title={cells.map((c) => `${c.label} ${c.value}`).join(" · ")}
     >
-      {cells.map((c) => (
-        <span className="cat-count-cell" key={c.letter}>
-          <span className="cat-count-letter">{c.letter}</span>
-          <span className="cat-count-value">{c.value}</span>
-        </span>
-      ))}
+      {cells.flatMap((c, i) =>
+        i === 0
+          ? [
+              <span key={`${c.letter}-ltr`} className="cat-count-letter">
+                {c.letter}
+              </span>,
+            ]
+          : [
+              <span
+                key={`sep-l-${c.letter}`}
+                className="cat-count-between"
+                aria-hidden
+              />,
+              <span key={`${c.letter}-ltr`} className="cat-count-letter">
+                {c.letter}
+              </span>,
+            ],
+      )}
+      {cells.flatMap((c, i) =>
+        i === 0
+          ? [
+              <span key={`${c.letter}-num`} className="cat-count-value">
+                {c.value}
+              </span>,
+            ]
+          : [
+              <span
+                key={`sep-v-${c.letter}`}
+                className="cat-count-between"
+                aria-hidden
+              >
+                {"\u2022"}
+              </span>,
+              <span key={`${c.letter}-num`} className="cat-count-value">
+                {c.value}
+              </span>,
+            ],
+      )}
     </span>
   );
 }
@@ -456,9 +488,9 @@ function SortableFifoRow({
     <li className="row-wrap" ref={setNodeRef} style={style} {...attributes}>
       <div className="row-slider" style={sliderStyle} {...slideHandlers}>
         <div className="row-main" onClick={() => handleClick(onSelect)}>
-          <div className="list-item" style={{ borderBottom: "none" }}>
+          <div className="list-item list-item--no-border">
             <DragHandle listeners={listeners} />
-            <div className="list-item-content" style={{ marginLeft: 8 }}>
+            <div className="list-item-content list-item-content--indent">
               <div className="list-item-title">{entry.name}</div>
             </div>
             <CountsPill counts={entry.counts} />
@@ -501,7 +533,7 @@ function StaticFifoRow({
     <li className="row-wrap">
       <div className="row-slider" style={sliderStyle} {...slideHandlers}>
         <div className="row-main" onClick={() => handleClick(onSelect)}>
-          <div className="list-item" style={{ borderBottom: "none" }}>
+          <div className="list-item list-item--no-border">
             <div className="drag-handle drag-handle--static" aria-hidden>
               <svg viewBox="0 0 16 16" fill="currentColor">
                 <circle cx="5" cy="3" r="1.5" />
@@ -512,7 +544,7 @@ function StaticFifoRow({
                 <circle cx="11" cy="13" r="1.5" />
               </svg>
             </div>
-            <div className="list-item-content" style={{ marginLeft: 8 }}>
+            <div className="list-item-content list-item-content--indent">
               <div className="list-item-title">{entry.name}</div>
             </div>
             <CountsPill counts={entry.counts} />

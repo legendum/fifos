@@ -5,11 +5,13 @@ import Login from "./components/Login";
 import TopBar from "./components/TopBar";
 import { setUnauthorizedHandler } from "./fetchWithAuth";
 import { type FifoDetailJson, fifoFromDetailJson } from "./fifoFromJson";
+import { initTheme } from "./theme";
 import type { FifoEntry } from "./types";
 
 type User = {
   legendum_linked: boolean;
   hosted: boolean;
+  meta?: { theme?: unknown };
 };
 
 /** Extract slug from the URL path. Returns null at root or for reserved prefixes. */
@@ -60,6 +62,7 @@ export default function App() {
         return;
       }
       const data = (await res.json()) as User;
+      initTheme(data.meta?.theme);
       setUser(data);
     } catch {
       setUser(null);
@@ -113,11 +116,7 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>
-        Loading...
-      </div>
-    );
+    return <div className="screen-loading">Loading...</div>;
   }
 
   if (!user) return <Login />;
@@ -130,7 +129,7 @@ export default function App() {
         setFilterQuery={setFilterQuery}
         filterInputRef={filterInputRef}
       />
-      <div style={{ display: selectedFifo ? "none" : undefined }}>
+      <div className={selectedFifo ? "app-root-panel--hidden" : undefined}>
         <Fifos
           onSelect={selectFifo}
           filterQuery={filterQuery}

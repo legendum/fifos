@@ -103,11 +103,7 @@ export default function TopBar({
           onClick={() => setShowInstall(true)}
           aria-label="About Fifos"
         >
-          <img
-            src="/fifos.png"
-            alt=""
-            style={{ width: 28, height: 28, borderRadius: 6 }}
-          />
+          <img src="/fifos.png" alt="" />
         </button>
         <label
           className="list-filter topbar-search-filter"

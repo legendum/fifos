@@ -73,6 +73,17 @@ describe("Fifos CRUD — self-hosted", () => {
     const { status, body } = await jget("/f/settings/me");
     expect(status).toBe(200);
     expect(body.legendum_linked).toBe(false);
+    expect(body.meta).toEqual({});
+  });
+
+  test("PATCH /f/settings/me merges meta (theme)", async () => {
+    const { status, body } = await jpatch("/f/settings/me", {
+      meta: { theme: "light" },
+    });
+    expect(status).toBe(200);
+    expect(body.meta?.theme).toBe("light");
+    const again = await jget("/f/settings/me");
+    expect(again.body.meta?.theme).toBe("light");
   });
 
   test("starter fifo is seeded for the local user", async () => {

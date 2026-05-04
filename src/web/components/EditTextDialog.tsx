@@ -44,7 +44,7 @@ export default function EditTextDialog({
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 style={{ margin: 0, fontSize: 18 }}>{title}</h2>
+          <h2 className="dialog-heading-title">{title}</h2>
           <button type="button" className="dialog-close" onClick={onClose}>
             &times;
           </button>
@@ -59,51 +59,36 @@ export default function EditTextDialog({
             onKeyDown={(e) => {
               if (e.key === "Enter") onSave();
             }}
-            style={{ width: "100%" }}
           />
           <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginTop: 12,
-              justifyContent: counter ? "space-between" : "flex-end",
-              alignItems: "center",
-            }}
+            className={
+              counter
+                ? "dialog-footer-actions dialog-footer-actions--split"
+                : "dialog-footer-actions dialog-footer-actions--end"
+            }
           >
             {counter ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ color: "#94a3b8", fontSize: 13 }}>
-                  {counter.label}
-                </span>
+              <div className="counter-inline">
+                <span className="counter-inline-label">{counter.label}</span>
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-secondary btn-counter-step"
                   onClick={() =>
                     counter.onChange(Math.max(counter.min, counter.value - 1))
                   }
                   disabled={counter.value <= counter.min}
-                  style={{ minWidth: 32, padding: "4px 10px" }}
                   aria-label={`Decrease ${counter.label}`}
                 >
                   −
                 </button>
-                <span
-                  style={{
-                    minWidth: 24,
-                    textAlign: "center",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {counter.value}
-                </span>
+                <span className="counter-inline-value">{counter.value}</span>
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-secondary btn-counter-step"
                   onClick={() =>
                     counter.onChange(Math.min(counter.max, counter.value + 1))
                   }
                   disabled={counter.value >= counter.max}
-                  style={{ minWidth: 32, padding: "4px 10px" }}
                   aria-label={`Increase ${counter.label}`}
                 >
                   +
