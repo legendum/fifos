@@ -76,11 +76,6 @@ async function serveIndex(): Promise<Response> {
   return new Response(html, { headers: { "Content-Type": "text/html" } });
 }
 
-function wantsHtml(req: Request): boolean {
-  const accept = req.headers.get("Accept") ?? "";
-  return accept.includes("text/html");
-}
-
 // @ts-expect-error — pure JS SDK
 const legendumSdk = require("../lib/legendum.js");
 
@@ -308,6 +303,22 @@ export default {
       return legendumRes!;
     }
 
+    // Browser GETs that are not API-shaped get the SPA shell before user
+    // resolution so unauthenticated visitors land on the login UI in hosted mode.
+    const acceptNav = req.headers.get("Accept") ?? "";
+    const isPageNavigation =
+      method === "GET" &&
+      !acceptNav.includes("application/json") &&
+      !path.startsWith("/f/") &&
+      !path.startsWith("/w/") &&
+      !path.startsWith("/auth/") &&
+      !path.startsWith("/dist/") &&
+      !path.match(/\.(md|json|yaml)$/);
+
+    if (isPageNavigation) {
+      return await serveIndex();
+    }
+
     // Resolve user — self-hosted has a single local user; hosted requires auth.
     let userId: number;
     if (isSelfHosted()) {
@@ -344,7 +355,6 @@ export default {
 
     // --- Fifos CRUD (auth) ---
     if (path === "/" && method === "GET") {
-      if (wantsHtml(req)) return await serveIndex();
       return fifosHandlers.indexFifos(userId);
     }
     if (path === "/" && method === "POST") {
