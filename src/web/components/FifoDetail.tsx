@@ -345,7 +345,7 @@ export default function FifoDetail({
                     : "Click to copy fifo ULID"
                 }
               >
-                <span className="fifo-webhook-text">{fifo.ulid}</span>
+                <span className="fifo-webhook-text">{fifo.ulid.slice(0, -6)}…</span>
                 {webhookClipboard.copied ? (
                   <span className="copied-badge">Copied!</span>
                 ) : (
@@ -484,7 +484,7 @@ export default function FifoDetail({
                       : "Click to copy item ULID"
                   }
                 >
-                  <span className="fifo-webhook-text">{expanded.id}</span>
+                  <span className="fifo-webhook-text">{expanded.id.slice(0, -6)}…</span>
                   {itemClipboard.copied ? (
                     <span className="copied-badge">Copied!</span>
                   ) : (
