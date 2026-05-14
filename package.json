@@ -15,7 +15,8 @@
     "lint:fix": "biome check --write .",
     "test": "bun test",
     "smoke": "bun run lint && bun test && bun run build",
-    "fifos": "bun run src/cli/main.ts"
+    "fifos": "bun run src/cli/main.ts",
+    "pues": "bun run scripts/pues.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

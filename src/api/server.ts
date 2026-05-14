@@ -66,6 +66,7 @@ async function serveIndex(): Promise<Response> {
     <link rel="icon" type="image/png" sizes="512x512" href="/fifos-512.png" />
     <link rel="apple-touch-icon" href="/fifos-192.png" />
     <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="/pues/theme.css" />
     <link rel="stylesheet" href="/main.css" />
   </head>
   <body>
@@ -218,6 +219,12 @@ export default {
     if (method === "GET") {
       if (path === "/main.css") {
         return serveStatic(join(root, "src/web/main.css"), "text/css");
+      }
+      if (path === "/pues/theme.css") {
+        return serveStatic(
+          join(root, "pues/base/theme/theme.css"),
+          "text/css",
+        );
       }
       if (path === "/manifest.json") {
         return serveStatic(

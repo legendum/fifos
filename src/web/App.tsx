@@ -5,7 +5,7 @@ import Login from "./components/Login";
 import TopBar from "./components/TopBar";
 import { setUnauthorizedHandler } from "./fetchWithAuth";
 import { type FifoDetailJson, fifoFromDetailJson } from "./fifoFromJson";
-import { reconcileTheme } from "./theme";
+import { reconcileTheme } from "pues/base/theme";
 import type { FifoEntry } from "./types";
 
 type User = {

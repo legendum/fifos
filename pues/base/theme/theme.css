@@ -1,0 +1,132 @@
+/*
+ * pues/base/theme/theme.css
+ *
+ * The shared theme contract: the full set of `--pues-*` tokens that
+ * todos, fifos, and linkobot have always defined in their own main.css
+ * files with the same values. This file is the new single source of
+ * truth; consumers may delete their duplicate blocks once they import
+ * this stylesheet.
+ *
+ * Naming: every token and class is `pues-`-prefixed. If you see an
+ * unprefixed name in this file, it's a bug.
+ *
+ * Component CSS for `<ThemeChooser>` lives at the bottom.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --pues-bg-page: #0f172a;
+  --pues-bg-surface: #1e293b;
+  --pues-bg-raised: #334155;
+  --pues-bg-raised-hover: #475569;
+
+  --pues-text-primary: #e2e8f0;
+  --pues-text-body: #cbd5e1;
+  --pues-text-secondary: #94a3b8;
+  --pues-text-muted: #64748b;
+  --pues-text-faint: #475569;
+
+  --pues-border-default: #334155;
+  --pues-border-strong: #475569;
+
+  --pues-accent: #3b82f6;
+  --pues-accent-hover: #2563eb;
+  --pues-accent-light: #60a5fa;
+  --pues-accent-glow: rgba(59, 130, 246, 0.35);
+
+  --pues-danger: #dc2626;
+  --pues-danger-hover: #ef4444;
+  --pues-danger-active: #b91c1c;
+  --pues-danger-text: #f87171;
+
+  --pues-success: #22c55e;
+
+  --pues-on-accent: #ffffff;
+
+  --pues-shadow-sm: rgba(0, 0, 0, 0.3);
+  --pues-shadow-md: rgba(0, 0, 0, 0.35);
+  --pues-shadow-lg: rgba(0, 0, 0, 0.4);
+  --pues-shadow-xl: rgba(0, 0, 0, 0.5);
+  --pues-overlay: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --pues-bg-page: #f1f5f9;
+  --pues-bg-surface: #ffffff;
+  --pues-bg-raised: #e2e8f0;
+  --pues-bg-raised-hover: #cbd5e1;
+
+  --pues-text-primary: #0f172a;
+  --pues-text-body: #1e293b;
+  --pues-text-secondary: #475569;
+  --pues-text-muted: #64748b;
+  --pues-text-faint: #94a3b8;
+
+  --pues-border-default: #e2e8f0;
+  --pues-border-strong: #94a3b8;
+
+  --pues-accent: #2563eb;
+  --pues-accent-hover: #1d4ed8;
+  --pues-accent-light: #3b82f6;
+  --pues-accent-glow: rgba(37, 99, 235, 0.3);
+
+  --pues-danger: #dc2626;
+  --pues-danger-hover: #ef4444;
+  --pues-danger-active: #b91c1c;
+  --pues-danger-text: #dc2626;
+
+  --pues-success: #16a34a;
+
+  --pues-on-accent: #ffffff;
+
+  --pues-shadow-sm: rgba(15, 23, 42, 0.08);
+  --pues-shadow-md: rgba(15, 23, 42, 0.12);
+  --pues-shadow-lg: rgba(15, 23, 42, 0.18);
+  --pues-shadow-xl: rgba(15, 23, 42, 0.22);
+  --pues-overlay: rgba(15, 23, 42, 0.4);
+}
+
+.pues-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pues-theme-chooser {
+  display: inline-flex;
+  padding: 2px;
+  margin: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--pues-bg-raised);
+  gap: 0;
+  min-inline-size: 0;
+}
+.pues-theme-chooser-option {
+  border: none;
+  background: transparent;
+  color: var(--pues-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.pues-theme-chooser-option:hover {
+  color: var(--pues-text-primary);
+}
+.pues-theme-chooser-option[aria-pressed="true"] {
+  background: var(--pues-bg-surface);
+  color: var(--pues-text-primary);
+  box-shadow: 0 1px 3px var(--pues-shadow-sm);
+}

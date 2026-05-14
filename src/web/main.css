@@ -587,7 +587,7 @@ body {
   margin: 0;
 }
 
-/* Theme preference — same pill group as linkobot */
+/* Theme preference — the .pues-theme-chooser pill group is owned by pues. */
 .links-list-theme {
   display: flex;
   flex-direction: column;
@@ -604,35 +604,6 @@ body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-}
-.theme-chooser {
-  display: inline-flex;
-  padding: 2px;
-  margin: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-raised);
-  gap: 0;
-  min-inline-size: 0;
-}
-.theme-chooser-option {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.theme-chooser-option:hover {
-  color: var(--text-primary);
-}
-.theme-chooser-option[aria-pressed="true"] {
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  box-shadow: 0 1px 3px var(--shadow-sm);
 }
 .links-list-theme--home {
   border-top: none;

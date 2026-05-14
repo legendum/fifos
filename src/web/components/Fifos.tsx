@@ -26,7 +26,7 @@ import {
 import type { FifoEntry } from "../types";
 import DragHandle from "./DragHandle";
 import EditTextDialog from "./EditTextDialog";
-import ThemeChooser from "./ThemeChooser";
+import { ThemeChooser } from "pues/base/theme";
 import { useEscape } from "./useEscape";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { useSwipeToReveal } from "./useSwipeToReveal";
@@ -326,8 +326,8 @@ export default function Fifos({
       )}
 
       <div className="links-list-theme links-list-theme--home">
-        <p className="links-list-theme-label">Appearance</p>
-        <ThemeChooser />
+        <p className="links-list-theme-label">Theme</p>
+        <ThemeChooser endpoint="/f/settings/me" />
       </div>
 
       {!creating && (
