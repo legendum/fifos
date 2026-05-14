@@ -34,6 +34,10 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
 
 const additionalManifestEntries: { url: string; revision: string }[] = [
   { url: "/main.css", revision: revisionFor("src/web/main.css") },
+  {
+    url: "/pues/theme.css",
+    revision: revisionFor("pues/base/theme/theme.css"),
+  },
   { url: "/manifest.json", revision: revisionFor("src/web/manifest.json") },
 ];
 
