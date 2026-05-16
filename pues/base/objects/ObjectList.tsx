@@ -47,6 +47,9 @@ export type ObjectListProps = {
   basePath?: string;
   ssePath?: string;
   sseEnabled?: boolean;
+  /** SPEC §5.8 — parent's public_id for parent-scoped resources. Forwarded
+   * to `useResource` so SSE handlers filter cross-parent events. */
+  parentId?: string | number;
 };
 
 const defaultRenderRow: RowRenderer = ({ row, dragHandleProps }) => (
@@ -65,8 +68,14 @@ export function ObjectList({
   basePath,
   ssePath,
   sseEnabled,
+  parentId,
 }: ObjectListProps) {
-  const r = useResource(resource, { basePath, ssePath, sseEnabled });
+  const r = useResource(resource, {
+    basePath,
+    ssePath,
+    sseEnabled,
+    parentId,
+  });
   const dnd = useDndPositions({ name: resource, resource: r, basePath });
 
   const sensors = useSensors(

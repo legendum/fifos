@@ -6,9 +6,17 @@ import {
 } from "pues/base/objects";
 import { sseRoute } from "pues/base/sse";
 import { setAuthCookieHeader } from "../lib/auth.js";
-import { closeTabs } from "../lib/billing.js";
-import { FIFOS_PURGE_INTERVAL_SECONDS, PORT } from "../lib/constants.js";
+import { chargeFifoCreate, closeTabs } from "../lib/billing.js";
+import {
+  DEFAULT_FIFO_MAX_RETRIES,
+  FIFOS_PURGE_INTERVAL_SECONDS,
+  MAX_FIFO_MAX_RETRIES,
+  MIN_FIFO_MAX_RETRIES,
+  maxFifosPerUser,
+  PORT,
+} from "../lib/constants.js";
 import { getDb } from "../lib/db.js";
+import { toSlug, validateFifoName } from "../lib/fifos.js";
 import { isSelfHosted, LOCAL_USER_EMAIL } from "../lib/mode.js";
 import { sweepRetention } from "../lib/purge.js";
 import { seedDefaultFifosForNewUser } from "../lib/seed-default-fifos.js";
@@ -179,7 +187,113 @@ const resolvePuesUser = async (req: Request): Promise<number | null> => {
 
 const puesSse = sseRoute({ resolveUser: resolvePuesUser });
 
+function rejectJson(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: code, message }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function maxRetriesInvalidMessage(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MIN_FIFO_MAX_RETRIES ||
+    value > MAX_FIFO_MAX_RETRIES
+  ) {
+    return `max_retries must be an integer from ${MIN_FIFO_MAX_RETRIES} to ${MAX_FIFO_MAX_RETRIES}`;
+  }
+  return null;
+}
+
 const fifosCols = resolveColumns(getDb(), "fifos", fifosResourceCfg);
+// Top-level fifos resource via pues: enforces slug derivation, name
+// validation, max_retries bounds, count limit, and credit billing in the
+// beforeInsert/beforeUpdate hooks. Mirrors the bespoke createFifo /
+// renameFifo logic in src/api/handlers/fifos.ts so /api/fifos and the
+// legacy `/` route stay behaviorally equivalent during the dual-routing
+// phase. The bespoke routes keep emitting notifyFifosChanged for the UI
+// SSE stream — pues broadcasts its own events on /api/events.
+const puesFifosRoutes = mountResource({
+  db: getDb(),
+  name: "fifos",
+  config: fifosResourceCfg,
+  resolveUser: resolvePuesUser,
+  broadcast: puesSse.broadcast,
+  beforeInsert: async ({ body, userId }) => {
+    const label = typeof body.label === "string" ? body.label.trim() : "";
+    const nameError = validateFifoName(label);
+    if (nameError) return rejectJson(400, "invalid_request", nameError);
+
+    const maxRetriesIn = body.max_retries;
+    const maxRetriesMsg = maxRetriesInvalidMessage(maxRetriesIn);
+    if (maxRetriesMsg) return rejectJson(400, "invalid_request", maxRetriesMsg);
+
+    const slug = toSlug(label);
+    const db = getDb();
+    const dup = db
+      .query("SELECT 1 FROM fifos WHERE user_id = ? AND slug = ?")
+      .get(userId, slug);
+    if (dup) {
+      return rejectJson(
+        400,
+        "invalid_request",
+        `A fifo with URL "${slug}" already exists`,
+      );
+    }
+
+    const countRow = db
+      .query("SELECT COUNT(*) AS n FROM fifos WHERE user_id = ?")
+      .get(userId) as { n: number };
+    if (countRow.n >= maxFifosPerUser()) {
+      return rejectJson(
+        403,
+        "forbidden",
+        `Fifo limit reached (${maxFifosPerUser()} per account)`,
+      );
+    }
+
+    const chargeError = await chargeFifoCreate(userId);
+    if (chargeError) return chargeError;
+
+    return {
+      ...body,
+      label,
+      slug,
+      max_retries: maxRetriesIn ?? DEFAULT_FIFO_MAX_RETRIES,
+    };
+  },
+  beforeUpdate: ({ body, existing, userId }) => {
+    const maxRetriesIn = body.max_retries;
+    const maxRetriesMsg = maxRetriesInvalidMessage(maxRetriesIn);
+    if (maxRetriesMsg) return rejectJson(400, "invalid_request", maxRetriesMsg);
+
+    if (typeof body.label !== "string") return body;
+    const trimmed = body.label.trim();
+    if (trimmed === "" || trimmed === existing.label) return body;
+
+    const nameError = validateFifoName(trimmed);
+    if (nameError) return rejectJson(400, "invalid_request", nameError);
+
+    const newSlug = toSlug(trimmed);
+    if (newSlug === existing.slug) return body;
+
+    const db = getDb();
+    const conflict = db
+      .query("SELECT 1 FROM fifos WHERE user_id = ? AND slug = ? AND ulid != ?")
+      .get(userId, newSlug, existing.id);
+    if (conflict) {
+      return rejectJson(
+        400,
+        "invalid_request",
+        `A fifo with URL "${newSlug}" already exists`,
+      );
+    }
+    return { ...body, slug: newSlug };
+  },
+});
+
 const puesItemsRoutes = mountResource({
   db: getDb(),
   name: "items",
@@ -254,6 +368,11 @@ export default {
           "/auth/logout": { POST: () => authHandlers.postLogout() },
         }
       : {}),
+    // pues-mounted top-level fifos resource — coexists with the bespoke
+    // `/` and `/:slug` routes during the dual-routing phase. The hooks in
+    // mountResource above enforce slug, max_retries, count limit, and
+    // billing so /api/fifos and the legacy `/` route stay equivalent.
+    ...puesFifosRoutes,
     // pues-mounted parent-scoped resource: items. Items remain primarily
     // written via /w/:ulid/* (webhook, public credential, billable); these
     // routes add an authenticated REST surface for programmatic clients.
