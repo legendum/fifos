@@ -6,7 +6,7 @@
     "strict": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "types": ["bun-types"],
+    "types": ["bun"],
     "baseUrl": ".",
     "paths": { "@/*": ["src/*"], "pues/*": ["pues/*"] }
   },
