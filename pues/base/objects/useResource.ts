@@ -156,16 +156,18 @@ export function useResource(
       // delivered per-user, so a user with multiple parents (e.g. multiple
       // fifos) receives sibling events on the same stream. Without this
       // filter, every view's cache would accumulate cross-parent rows.
+      //
+      // Pagination intentionally does NOT tighten these rules — pues
+      // accepts a superset of events. A `.updated` for a row in an
+      // unloaded range simply inserts it into the cache (insertSorted
+      // places it at its position; if it lies beyond the loaded prefix,
+      // it appears at the tail, which is harmless for queue-shaped
+      // resources and rare for the others). Trade-off: simpler contract
+      // over a minor visual quirk in narrow edge cases.
       const matchesScope = (eventParentId: unknown): boolean => {
         if (parentId === undefined) return true;
         return eventParentId === parentId;
       };
-      // SPEC §6: in pagination mode the cache holds only the loaded
-      // prefix. `.updated` / `.reordered` for rows beyond the cursor
-      // must NOT fall back to "insert into cache" — that would silently
-      // pollute the page with rows the user hasn't paginated to yet.
-      // `.created` still appends because new rows always get max+STEP
-      // positions and belong at the tail.
       return {
         [`${name}.created`]: (data: unknown) => {
           if (!isRow(data)) return;
@@ -175,11 +177,7 @@ export function useResource(
         [`${name}.updated`]: (data: unknown) => {
           if (!isRow(data)) return;
           if (!matchesScope(data.parent_id)) return;
-          setRows((prev) => {
-            const exists = prev.some((r) => r.id === data.id);
-            if (!exists && paginated) return prev;
-            return replaceById(prev, stripOpId(data));
-          });
+          setRows((prev) => replaceById(prev, stripOpId(data)));
         },
         [`${name}.reordered`]: (data: unknown) => {
           if (!data || typeof data !== "object") return;
@@ -194,14 +192,16 @@ export function useResource(
           )
             return;
           if (!matchesScope(parent_id)) return;
-          setRows((prev) => {
-            const existing = prev.find((r) => r.id === id);
-            if (!existing && paginated) return prev;
-            return insertSorted(
+          setRows((prev) =>
+            insertSorted(
               prev.filter((r) => r.id !== id),
-              { ...(existing ?? ({ id, position } as Row)), position },
-            );
-          });
+              {
+                ...(prev.find((r) => r.id === id) ??
+                  ({ id, position } as Row)),
+                position,
+              },
+            ),
+          );
         },
         [`${name}.deleted`]: (data: unknown) => {
           if (!data || typeof data !== "object") return;
@@ -215,7 +215,7 @@ export function useResource(
         },
       };
     },
-    [name, parentId, paginated],
+    [name, parentId],
   );
 
   const sse = useSSE(handlers, {
