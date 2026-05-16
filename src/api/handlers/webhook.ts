@@ -1,4 +1,5 @@
 import { YAML } from "bun";
+import { broadcastRow, toWire } from "pues/base/objects";
 
 import { chargeWebhookWrite } from "../../lib/billing.js";
 import { MAX_ITEM_BYTES, MAX_REASON_BYTES } from "../../lib/constants.js";
@@ -19,6 +20,7 @@ import {
   skip,
 } from "../../lib/queue.js";
 import { type PublishType, publish, subscribe } from "../../lib/sse.js";
+import { itemsCols, puesSse } from "../server.js";
 import { json } from "../json.js";
 import { notifyFifosChanged } from "./fifos.js";
 
@@ -71,6 +73,7 @@ export async function postPush(req: Request, ulid: string): Promise<Response> {
       },
       responseBody,
       201,
+      { event: "created", itemUlid: result.id },
     );
   }
 
@@ -99,6 +102,8 @@ export async function postPop(_req: Request, ulid: string): Promise<Response> {
       position: row.position,
       created_at: row.created_at,
     },
+    200,
+    { event: "updated", itemUlid: row.id },
   );
 }
 
@@ -129,6 +134,8 @@ export async function postPull(req: Request, ulid: string): Promise<Response> {
       created_at: row.created_at,
       locked_until: row.locked_until,
     },
+    200,
+    { event: "updated", itemUlid: row.id },
   );
 }
 
@@ -167,9 +174,57 @@ type FifoByUlid = NonNullable<ReturnType<typeof getFifoByUlid>>;
 type FifoWebhookSseType = Extract<PublishType, "push" | "change">;
 
 /**
+ * SELECT the canonical wire row for an item, projecting via `toWire` so the
+ * shape matches what pues `mountResource` emits. Used by the bridge below to
+ * keep `useResource("items")` subscribers in sync with webhook mutations.
+ *
+ * Returns null when the item has been deleted between the verb call and the
+ * bridge re-read — the broadcast is then skipped (no echo of a phantom row).
+ * The SELECT projects parent_id from the fifo via JOIN, matching the column
+ * names `toWire` expects (`public_id_value`, `position`, `parent_id`, plus
+ * passthroughs by their actual names).
+ */
+function readItemWireRow(
+  fifo: FifoByUlid,
+  itemUlid: string,
+): ReturnType<typeof toWire> | null {
+  const db = getDb();
+  const dbRow = db
+    .query(
+      `SELECT items.id AS pk_value,
+              items.ulid AS public_id_value,
+              items.position AS position,
+              items.status AS status,
+              items.data AS data,
+              items.locked_until AS locked_until,
+              items.retry_count AS retry_count,
+              items.reason AS reason,
+              items.created_at AS created_at,
+              items.updated_at AS updated_at,
+              fifos.ulid AS parent_id
+         FROM items
+         JOIN fifos ON items.fifo_id = fifos.id
+        WHERE items.fifo_id = ? AND items.ulid = ?`,
+    )
+    .get(fifo.id, itemUlid) as Record<string, unknown> | undefined;
+  if (!dbRow) return null;
+  return toWire(dbRow, itemsCols);
+}
+
+/**
  * Debit **0.01 credits on the user’s long-lived Legendum tab** (see
- * `chargeWebhookWrite`), publish to `fifo:<id>`, refresh the user fifos SSE
- * snapshot, and return JSON. Every chargeable webhook mutation should end here.
+ * `chargeWebhookWrite`), publish to `fifo:<id>` (bespoke SSE for the
+ * existing fifos UI), refresh the user fifos SSE snapshot, optionally
+ * re-broadcast on pues' SSE channel so `useResource("items")` subscribers
+ * stay coherent (SPEC 7.4 bridge), and return JSON. Every chargeable
+ * webhook mutation should end here.
+ *
+ * `puesBridge` is the bridge: pass it whenever the webhook mutation maps
+ * to a pues row event (push → "created"; pop/pull/done/fail/skip/retry
+ * → "updated"). The bridge re-reads the canonical wire row from the DB
+ * so the shape matches native pues mutations exactly. Skipping the
+ * bridge call is the right move only for paths that do not mutate the
+ * items table at all.
  */
 async function chargePublishNotifyJson(
   fifo: FifoByUlid,
@@ -177,11 +232,24 @@ async function chargePublishNotifyJson(
   ssePayload: Record<string, unknown>,
   responseBody: Record<string, unknown>,
   httpStatus = 200,
+  puesBridge?: { event: "created" | "updated"; itemUlid: string },
 ): Promise<Response> {
   const chargeError = await chargeWebhookWrite(fifo.user_id);
   if (chargeError) return chargeError;
   publish(`fifo:${fifo.id}`, sseType, ssePayload);
   notifyFifosChanged(fifo.user_id);
+  if (puesBridge) {
+    const wireRow = readItemWireRow(fifo, puesBridge.itemUlid);
+    if (wireRow) {
+      broadcastRow(
+        puesSse.broadcast,
+        fifo.user_id,
+        "items",
+        puesBridge.event,
+        wireRow,
+      );
+    }
+  }
   return json(responseBody, httpStatus);
 }
 
@@ -207,11 +275,18 @@ async function postFinish(
     position: row.position,
     reason: row.reason,
   };
-  return chargePublishNotifyJson(fifo, "change", ssePayload, {
-    id: row.id,
-    status: row.status,
-    reason: row.reason,
-  });
+  return chargePublishNotifyJson(
+    fifo,
+    "change",
+    ssePayload,
+    {
+      id: row.id,
+      status: row.status,
+      reason: row.reason,
+    },
+    200,
+    { event: "updated", itemUlid: row.id },
+  );
 }
 
 /** POST /w/:ulid/done/:id — locked item → done. Optional reason body (max 1 KiB). */
@@ -242,12 +317,19 @@ export async function postFail(
   };
   if (result.exhausted_retries) changePayload.exhausted_retries = true;
 
-  return chargePublishNotifyJson(fifo, "change", changePayload, {
-    id: row.id,
-    status: row.status,
-    reason: row.reason,
-    exhausted_retries: result.exhausted_retries,
-  });
+  return chargePublishNotifyJson(
+    fifo,
+    "change",
+    changePayload,
+    {
+      id: row.id,
+      status: row.status,
+      reason: row.reason,
+      exhausted_retries: result.exhausted_retries,
+    },
+    200,
+    { event: "updated", itemUlid: row.id },
+  );
 }
 
 /** POST /w/:ulid/skip/:id — locked item → skip (terminal; retry refuses). Optional reason body. */
@@ -282,6 +364,8 @@ export async function postRetry(
       reason: null,
     },
     { id: row.id, status: row.status, position: row.position },
+    200,
+    { event: "updated", itemUlid: row.id },
   );
 }
 

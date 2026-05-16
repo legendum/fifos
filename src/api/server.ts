@@ -208,6 +208,20 @@ function maxRetriesInvalidMessage(value: unknown): string | null {
 }
 
 const fifosCols = resolveColumns(getDb(), "fifos", fifosResourceCfg);
+// Pre-resolve items cols so the webhook bridge in handlers/webhook.ts can
+// project DB rows to canonical wire shape via toWire(row, itemsCols). pues'
+// mountResource also resolves these internally; the second resolution is
+// idempotent given identical inputs. Exported below for the bridge.
+export const itemsCols = resolveColumns(
+  getDb(),
+  "items",
+  itemsResourceCfg,
+  fifosCols,
+);
+// Exported so handlers/webhook.ts can broadcast on the same SSE channel
+// the pues-mounted routes use — see SPEC 7.4.
+export { puesSse };
+
 // Top-level fifos resource via pues: enforces slug derivation, name
 // validation, max_retries bounds, count limit, and credit billing in the
 // beforeInsert/beforeUpdate hooks. Mirrors the bespoke createFifo /

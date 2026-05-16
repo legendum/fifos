@@ -1,4 +1,5 @@
 export { AddButton, type AddButtonProps } from "./AddButton";
+export { broadcastRow } from "./broadcast";
 export {
   type ColumnRoles,
   type HttpMethod,
