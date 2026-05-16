@@ -186,8 +186,11 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     const ownerId = await resolveOwner(req, args.resolveUser, auth.get);
     if (ownerId instanceof Response) return ownerId;
     const { limit, offset, afterPosition } = parsePagination(req.url);
-    // The cursor is bound twice in the SQL — once for the IS NULL check and
-    // once for the comparison. SQLite short-circuits on the NULL branch.
+    const filters = filterBinds(cols, req.url);
+    // Bind order matches the SQL: scope binds (parentPublicId+ownerId or
+    // ownerId alone), cursor (twice), filter pairs (one per whitelisted
+    // column), then limit + offset. SQLite short-circuits all `IS NULL`
+    // branches so absent params pay no comparison cost.
     let rows: Array<Record<string, unknown>>;
     if (cols.parent) {
       const parentPublicId = req.params?.[cols.parent.param];
@@ -199,6 +202,7 @@ export function mountResource(args: MountResourceArgs): RouteMap {
         ownerId,
         afterPosition,
         afterPosition,
+        ...filters,
         limit,
         offset,
       ) as Array<Record<string, unknown>>;
@@ -207,6 +211,7 @@ export function mountResource(args: MountResourceArgs): RouteMap {
         ownerId,
         afterPosition,
         afterPosition,
+        ...filters,
         limit,
         offset,
       ) as Array<Record<string, unknown>>;
@@ -214,6 +219,7 @@ export function mountResource(args: MountResourceArgs): RouteMap {
       rows = selectStmt.all(
         afterPosition,
         afterPosition,
+        ...filters,
         limit,
         offset,
       ) as Array<Record<string, unknown>>;
@@ -529,6 +535,55 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     return Response.json(wire);
   };
 
+  // Counts endpoint (SPEC §5.10). One call returns aggregations across the
+  // user's entire visible set — for parent-scoped resources, that includes
+  // every parent the user owns (not just the one named in a URL prefix).
+  // Avoids the N-calls-per-parent pattern in fifos-shaped UIs where the
+  // home page wants per-fifo per-status badges.
+  const getCounts: Handler = async (req) => {
+    if (auth.get !== "user") {
+      // SPEC §5.10: only user-scoped resources expose counts (parent-scoped
+      // is always user-scoped). Public-read could be added later if needed.
+      return jsonError(403, "forbidden");
+    }
+    const ownerId = await resolveOwner(req, args.resolveUser, "user");
+    if (ownerId instanceof Response) return ownerId;
+    const url = new URL(req.url);
+    const by = url.searchParams.get("by");
+    if (!by) return jsonError(400, "by required");
+    if (!cols.filter.equals.includes(by)) {
+      return jsonError(
+        400,
+        `by must be one of: ${cols.filter.equals.join(", ") || "<none configured>"}`,
+      );
+    }
+    const filters = filterBinds(cols, req.url);
+    let rowsOut: Array<Record<string, unknown>>;
+    if (cols.parent) {
+      const child = q(cols.table);
+      const parentTbl = q(cols.parent.table);
+      const sql =
+        `SELECT ${parentTbl}.${q(cols.parent.public_id)} AS parent_id, ` +
+        `${child}.${q(by)} AS value, COUNT(*) AS n ` +
+        `FROM ${child} ` +
+        `JOIN ${parentTbl} ON ${child}.${q(cols.parent.column)} = ${parentTbl}.${q(cols.parent.pk)} ` +
+        `WHERE ${parentTbl}.${q(cols.parent.owner)} = ? ${buildFilterClauses(cols)} ` +
+        `GROUP BY ${parentTbl}.${q(cols.parent.public_id)}, ${child}.${q(by)}`;
+      rowsOut = args.db
+        .query(sql)
+        .all(ownerId, ...filters) as Array<Record<string, unknown>>;
+    } else {
+      const sql =
+        `SELECT ${q(by)} AS value, COUNT(*) AS n FROM ${q(cols.table)} ` +
+        `WHERE ${q(cols.owner!)} = ? ${buildFilterClauses(cols)} ` +
+        `GROUP BY ${q(by)}`;
+      rowsOut = args.db
+        .query(sql)
+        .all(ownerId, ...filters) as Array<Record<string, unknown>>;
+    }
+    return Response.json(rowsOut);
+  };
+
   const deleteOne: Handler = async (req) => {
     if (auth.write !== "user") return jsonError(403, "forbidden");
     const ownerId = await resolveOwner(req, args.resolveUser, "user");
@@ -576,14 +631,21 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     ? `${cols.prefix}/${resourceName}`
     : `/api/${resourceName}`;
   const itemRoute = `${listRoute}/:id`;
+  // Counts always at the top-level `/api/<name>/counts` regardless of
+  // whether the resource is parent-scoped — one call returns counts across
+  // every parent the user owns (SPEC §5.10). Bun's router prefers literal
+  // segments over `:id` patterns, so the path is unambiguous.
+  const countsRoute = `/api/${resourceName}/counts`;
   return {
     [listRoute]: { GET: getList, POST: createOne },
     [itemRoute]: { PATCH: patchOne, DELETE: deleteOne },
+    [countsRoute]: { GET: getCounts },
   };
 }
 
 function buildSelectSql(cols: ResolvedColumns, getPolicy: AuthPolicy): string {
   const parts = baseSelectParts(cols);
+  const filter = buildFilterClauses(cols);
   if (cols.parent) {
     // Parent-scoped: JOIN to the parent table and authorize via the
     // parent's public_id (from URL) + owner (authenticated userId).
@@ -592,20 +654,58 @@ function buildSelectSql(cols: ResolvedColumns, getPolicy: AuthPolicy): string {
     // child and parent (SQLite throws "ambiguous column" otherwise).
     // The `(? IS NULL OR position > ?)` predicate is the cursor for
     // pagination — the same value is bound twice; SQLite short-circuits
-    // when the cursor is null (SPEC §6).
+    // when the cursor is null (SPEC §6.1). Filter clauses use the same
+    // short-circuit trick (SPEC §5.9).
     const child = q(cols.table);
     return (
       `SELECT ${parts.join(", ")} FROM ${child} ` +
       `JOIN ${q(cols.parent.table)} ON ${child}.${q(cols.parent.column)} = ${q(cols.parent.table)}.${q(cols.parent.pk)} ` +
       `WHERE ${q(cols.parent.table)}.${q(cols.parent.public_id)} = ? AND ${q(cols.parent.table)}.${q(cols.parent.owner)} = ? ` +
       `AND (? IS NULL OR ${child}.${q(cols.position)} > ?) ` +
+      `${filter} ` +
       `ORDER BY ${child}.${q(cols.position)} ASC, ${child}.${q(cols.pk)} ASC ` +
       `LIMIT ? OFFSET ?`
     );
   }
-  const where = getPolicy === "user" ? `WHERE ${q(cols.owner!)} = ?` : "WHERE 1=1";
+  const where =
+    getPolicy === "user" ? `WHERE ${q(cols.owner!)} = ?` : "WHERE 1=1";
   const orderBy = `ORDER BY ${q(cols.position)} ASC, ${q(cols.pk)} ASC`;
-  return `SELECT ${parts.join(", ")} FROM ${q(cols.table)} ${where} AND (? IS NULL OR ${q(cols.position)} > ?) ${orderBy} LIMIT ? OFFSET ?`;
+  return `SELECT ${parts.join(", ")} FROM ${q(cols.table)} ${where} AND (? IS NULL OR ${q(cols.position)} > ?) ${filter} ${orderBy} LIMIT ? OFFSET ?`;
+}
+
+/** SPEC §5.9 — build the AND-fragment of filter predicates for whitelisted
+ * columns. Each clause uses `(? IS NULL OR col OP ?)`; the same value is
+ * bound twice. When the param is absent the IS NULL branch short-circuits,
+ * so unfiltered requests pay only a constant per-clause cost. */
+function buildFilterClauses(cols: ResolvedColumns): string {
+  const child = cols.parent ? `${q(cols.table)}.` : "";
+  const parts: string[] = [];
+  for (const col of cols.filter.equals) {
+    parts.push(`AND (? IS NULL OR ${child}${q(col)} = ?)`);
+  }
+  for (const col of cols.filter.contains) {
+    parts.push(`AND (? IS NULL OR ${child}${q(col)} LIKE '%' || ? || '%')`);
+  }
+  return parts.join(" ");
+}
+
+/** Extract filter binds from the request URL — pairs `(value, value)` for
+ * each whitelisted column, in the same order as `buildFilterClauses`. A null
+ * value means "no filter active for this column"; the SQL short-circuits. */
+function filterBinds(cols: ResolvedColumns, urlStr: string): unknown[] {
+  const url = new URL(urlStr);
+  const binds: unknown[] = [];
+  for (const col of cols.filter.equals) {
+    const raw = url.searchParams.get(col);
+    const v = raw == null || raw === "" ? null : raw;
+    binds.push(v, v);
+  }
+  for (const col of cols.filter.contains) {
+    const raw = url.searchParams.get(col);
+    const v = raw == null || raw === "" ? null : raw;
+    binds.push(v, v);
+  }
+  return binds;
 }
 
 function buildFindOneSql(cols: ResolvedColumns): string {
