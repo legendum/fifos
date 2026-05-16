@@ -478,11 +478,16 @@ export function mountResource(args: MountResourceArgs): RouteMap {
         op_id: opId,
       });
     }
+    // Parent-scoped events include the parent's public_id so per-mount
+    // useResource subscribers can drop cross-parent updates (SPEC §5.8).
+    const eventParentId = cols.parent ? parentPublicId : undefined;
     if (didReorder) {
       broadcast?.(
         ownerId as number,
         `${resourceName}.reordered`,
-        { id: wire.id, position: wire.position },
+        eventParentId !== undefined
+          ? { id: wire.id, position: wire.position, parent_id: eventParentId }
+          : { id: wire.id, position: wire.position },
         { op_id: opId },
       );
     }
@@ -498,7 +503,9 @@ export function mountResource(args: MountResourceArgs): RouteMap {
         broadcast?.(
           ownerId as number,
           `${resourceName}.reordered`,
-          { id: sib.pid, position: e.position },
+          eventParentId !== undefined
+            ? { id: sib.pid, position: e.position, parent_id: eventParentId }
+            : { id: sib.pid, position: e.position },
           { op_id: null },
         );
       }
@@ -536,7 +543,9 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     broadcast?.(
       ownerId as number,
       `${resourceName}.deleted`,
-      { id: publicId },
+      cols.parent
+        ? { id: publicId, parent_id: parentPublicId }
+        : { id: publicId },
       {
         op_id: opId,
       },
@@ -610,6 +619,13 @@ function baseSelectParts(cols: ResolvedColumns): string[] {
   if (cols.created_at)
     out.push(`${qualify(cols.created_at)} AS created_at`);
   if (cols.meta) out.push(`${qualify(cols.meta)} AS meta`);
+  // Parent-scoped wire rows project the parent's public_id (SPEC §5.8) so
+  // per-mount useResource SSE handlers can filter cross-parent events.
+  if (cols.parent) {
+    out.push(
+      `${q(cols.parent.table)}.${q(cols.parent.public_id)} AS parent_id`,
+    );
+  }
   for (const col of cols.passthrough) {
     out.push(qualify(col));
   }

@@ -14,8 +14,13 @@ import { type UseSSEResult, useSSE } from "../sse/useSSE";
 
 export type Row = {
   id: string | number;
-  label: string;
+  /** Omitted for resources with no label-role mapping (SPEC §5.2). */
+  label?: string;
   position: number;
+  /** Parent's public_id for parent-scoped resources (SPEC §5.8). The SSE
+   * handler in `useResource` uses this to drop cross-parent events when
+   * the resource is mounted per-view. */
+  parent_id?: string | number;
   updated_at?: number | string;
   created_at?: number | string;
   meta?: Record<string, unknown>;
@@ -43,6 +48,11 @@ export type UseResourceOptions = {
    *  auth state — defer until the user is loaded so the initial
    *  request doesn't 401. Defaults to true. */
   enabled?: boolean;
+  /** Parent's public_id, for parent-scoped resources (SPEC §5.8). When
+   * set, SSE event handlers drop events whose `parent_id` differs —
+   * keeping per-view caches scoped to the URL's parent. Omit (or set
+   * undefined) for top-level resources. */
+  parentId?: string | number;
 };
 
 export function useResource(
@@ -50,9 +60,10 @@ export function useResource(
   options: UseResourceOptions = {},
 ): UseResourceResult {
   const basePath = options.basePath ?? "/api";
-  const ssePath = options.ssePath ?? `${basePath}/events`;
+  const ssePath = options.ssePath ?? "/api/events";
   const sseEnabled = options.sseEnabled ?? true;
   const enabled = options.enabled ?? true;
+  const parentId = options.parentId;
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,42 +97,64 @@ export function useResource(
   }, [name, basePath, reloadTick, enabled]);
 
   const handlers = useMemo(
-    () => ({
-      [`${name}.created`]: (data: unknown) => {
-        if (!isRow(data)) return;
-        setRows((prev) => insertSorted(prev, stripOpId(data)));
-      },
-      [`${name}.updated`]: (data: unknown) => {
-        if (!isRow(data)) return;
-        setRows((prev) => replaceById(prev, stripOpId(data)));
-      },
-      [`${name}.reordered`]: (data: unknown) => {
-        if (!data || typeof data !== "object") return;
-        const { id, position } = data as { id?: unknown; position?: unknown };
-        if (
-          typeof position !== "number" ||
-          (typeof id !== "string" && typeof id !== "number")
-        )
-          return;
-        setRows((prev) =>
-          insertSorted(
-            prev.filter((r) => r.id !== id),
-            {
-              ...(prev.find((r) => r.id === id) ??
-                ({ id, label: "", position } as Row)),
-              position,
-            },
-          ),
-        );
-      },
-      [`${name}.deleted`]: (data: unknown) => {
-        if (!data || typeof data !== "object") return;
-        const { id } = data as { id?: unknown };
-        if (typeof id !== "string" && typeof id !== "number") return;
-        setRows((prev) => prev.filter((r) => r.id !== id));
-      },
-    }),
-    [name],
+    () => {
+      // SPEC §5.8: when this hook is bound to a parent-scoped view via
+      // `parentId`, drop events whose `parent_id` differs. Events are
+      // delivered per-user, so a user with multiple parents (e.g. multiple
+      // fifos) receives sibling events on the same stream. Without this
+      // filter, every view's cache would accumulate cross-parent rows.
+      const matchesScope = (eventParentId: unknown): boolean => {
+        if (parentId === undefined) return true;
+        return eventParentId === parentId;
+      };
+      return {
+        [`${name}.created`]: (data: unknown) => {
+          if (!isRow(data)) return;
+          if (!matchesScope(data.parent_id)) return;
+          setRows((prev) => insertSorted(prev, stripOpId(data)));
+        },
+        [`${name}.updated`]: (data: unknown) => {
+          if (!isRow(data)) return;
+          if (!matchesScope(data.parent_id)) return;
+          setRows((prev) => replaceById(prev, stripOpId(data)));
+        },
+        [`${name}.reordered`]: (data: unknown) => {
+          if (!data || typeof data !== "object") return;
+          const { id, position, parent_id } = data as {
+            id?: unknown;
+            position?: unknown;
+            parent_id?: unknown;
+          };
+          if (
+            typeof position !== "number" ||
+            (typeof id !== "string" && typeof id !== "number")
+          )
+            return;
+          if (!matchesScope(parent_id)) return;
+          setRows((prev) =>
+            insertSorted(
+              prev.filter((r) => r.id !== id),
+              {
+                ...(prev.find((r) => r.id === id) ??
+                  ({ id, position } as Row)),
+                position,
+              },
+            ),
+          );
+        },
+        [`${name}.deleted`]: (data: unknown) => {
+          if (!data || typeof data !== "object") return;
+          const { id, parent_id } = data as {
+            id?: unknown;
+            parent_id?: unknown;
+          };
+          if (typeof id !== "string" && typeof id !== "number") return;
+          if (!matchesScope(parent_id)) return;
+          setRows((prev) => prev.filter((r) => r.id !== id));
+        },
+      };
+    },
+    [name, parentId],
   );
 
   const sse = useSSE(handlers, {
@@ -140,9 +173,9 @@ export function useResource(
 }
 
 function isRow(v: unknown): v is Row {
-  return (
-    !!v && typeof v === "object" && "id" in v && "label" in v && "position" in v
-  );
+  // `label` is optional (SPEC §5.2), so the guard requires only the keys
+  // every wire row carries: id and position.
+  return !!v && typeof v === "object" && "id" in v && "position" in v;
 }
 
 function stripOpId(row: Row): Row {

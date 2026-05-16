@@ -13,6 +13,9 @@ export type WireRow = {
    * items and other rows without a human-friendly name. */
   label?: string;
   position: number;
+  /** Parent's public_id for parent-scoped resources (SPEC §5.8). Clients
+   * use it to filter SSE events to the current view's parent. */
+  parent_id?: string | number;
   updated_at?: number | string;
   created_at?: number | string;
   meta?: Record<string, unknown>;
@@ -28,6 +31,7 @@ export function toWire(
     position: row.position as number,
   };
   if (cols.label) out.label = row.label as string;
+  if (cols.parent) out.parent_id = row.parent_id as string | number;
   if (cols.updated_at) out.updated_at = row.updated_at as number | string;
   if (cols.created_at) out.created_at = row.created_at as number | string;
   if (cols.meta) out.meta = safeParseMeta(row.meta);

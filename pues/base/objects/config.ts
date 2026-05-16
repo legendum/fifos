@@ -100,9 +100,12 @@ const DEFAULTS: Record<(typeof ALL_ROLES)[number], string> = {
 // Canonical wire keys that an app column must never collide with — SPEC §5.6.
 // `id` is excluded: it is the canonical wire key for the `public_id` role, but
 // the column literally named `id` is almost universally the `pk` role.
+// `parent_id` is reserved because parent-scoped resources project the
+// parent's public_id under that key (SPEC §5.8).
 const CANONICAL_RESERVED = new Set([
   "label",
   "position",
+  "parent_id",
   "updated_at",
   "created_at",
   "meta",
