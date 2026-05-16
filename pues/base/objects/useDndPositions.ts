@@ -18,9 +18,9 @@ import { useCallback, useMemo } from "react";
 
 import type { UseResourceResult } from "./useResource";
 
-export type UseDndPositionsArgs = {
+export type UseDndPositionsArgs<TExtra = Record<string, unknown>> = {
   name: string;
-  resource: Pick<UseResourceResult, "rows" | "mutate" | "newOpId">;
+  resource: Pick<UseResourceResult<TExtra>, "rows" | "mutate" | "newOpId">;
   basePath?: string;
 };
 
@@ -31,8 +31,8 @@ export type UseDndPositionsResult = {
   onDragEnd: (event: DragEndEvent) => void;
 };
 
-export function useDndPositions(
-  args: UseDndPositionsArgs,
+export function useDndPositions<TExtra = Record<string, unknown>>(
+  args: UseDndPositionsArgs<TExtra>,
 ): UseDndPositionsResult {
   const basePath = args.basePath ?? "/api";
   const { rows, mutate, newOpId } = args.resource;

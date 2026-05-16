@@ -301,6 +301,12 @@ const puesItemsRoutes = mountResource({
   parentCols: fifosCols,
   resolveUser: resolvePuesUser,
   broadcast: puesSse.broadcast,
+  // State-machine entry guard. Items begin life in "todo" regardless of
+  // what the client sent; transitions to lock/done/fail/skip happen
+  // exclusively via /w/:ulid/*. Combined with methods: [GET, POST] in
+  // pues.yaml, this means no pues route can mutate status on an
+  // existing row.
+  beforeInsert: ({ body }) => ({ ...body, status: "todo" }),
 });
 
 const webhookCorsHeaders: Record<string, string> = {

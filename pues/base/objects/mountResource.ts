@@ -103,6 +103,34 @@ export type BeforeUpdateHook = (
   | Response
   | Promise<Record<string, unknown> | Response>;
 
+export type BeforeDeleteContext = {
+  /** The existing row about to be deleted, in canonical wire shape — same
+   * shape `beforeUpdate` sees. Useful for hooks that need to inspect row
+   * state to decide whether to allow the delete (e.g. block delete on rows
+   * with active children, charge a credit, soft-delete instead). */
+  existing: WireRow;
+  /** The authenticated user. */
+  userId: number;
+  cols: ResolvedColumns;
+};
+
+/**
+ * Optional per-resource hook called before pues issues its `DELETE`.
+ * Asymmetric with `beforeInsert`/`beforeUpdate`: DELETE has no request body
+ * to rewrite, so the only "proceed" signal is `void`/`undefined`.
+ *
+ * Return value:
+ *   - `void` / `undefined` → pues proceeds with the DELETE and broadcasts
+ *     the `<name>.deleted` event.
+ *   - `Response` → pues returns it verbatim and skips the DELETE entirely
+ *     (no broadcast). Use for 403 quota-exhausted, 409 cascade-block, etc.
+ *
+ * `throw` is shorthand for a 400 with the error message as `error`.
+ */
+export type BeforeDeleteHook = (
+  ctx: BeforeDeleteContext,
+) => undefined | Response | Promise<undefined | Response>;
+
 export type MountResourceArgs = {
   db: Database;
   name: string;
@@ -117,6 +145,7 @@ export type MountResourceArgs = {
   newId?: () => string;
   beforeInsert?: BeforeInsertHook;
   beforeUpdate?: BeforeUpdateHook;
+  beforeDelete?: BeforeDeleteHook;
 };
 
 export type Handler = (
@@ -317,11 +346,9 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     args.db.run(sql, ...(insertBinds as []));
 
     const row = cols.parent
-      ? (findOneStmt.get(
-          id,
-          req.params?.[cols.parent.param],
-          ownerId,
-        ) as Record<string, unknown> | undefined)
+      ? (findOneStmt.get(id, req.params?.[cols.parent.param], ownerId) as
+          | Record<string, unknown>
+          | undefined)
       : (findOneStmt.get(id, ownerId) as Record<string, unknown> | undefined);
     if (!row) return jsonError(500, "insert succeeded but row not found");
     const wire = toWire(row, cols);
@@ -340,9 +367,7 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     if (ownerId instanceof Response) return ownerId;
     const publicId = req.params?.id;
     if (!publicId) return jsonError(400, "id required");
-    const parentPublicId = cols.parent
-      ? req.params?.[cols.parent.param]
-      : null;
+    const parentPublicId = cols.parent ? req.params?.[cols.parent.param] : null;
     if (cols.parent && !parentPublicId) {
       return jsonError(400, `parent ${cols.parent.param} required`);
     }
@@ -569,17 +594,17 @@ export function mountResource(args: MountResourceArgs): RouteMap {
         `JOIN ${parentTbl} ON ${child}.${q(cols.parent.column)} = ${parentTbl}.${q(cols.parent.pk)} ` +
         `WHERE ${parentTbl}.${q(cols.parent.owner)} = ? ${buildFilterClauses(cols)} ` +
         `GROUP BY ${parentTbl}.${q(cols.parent.public_id)}, ${child}.${q(by)}`;
-      rowsOut = args.db
-        .query(sql)
-        .all(ownerId, ...filters) as Array<Record<string, unknown>>;
+      rowsOut = args.db.query(sql).all(ownerId, ...filters) as Array<
+        Record<string, unknown>
+      >;
     } else {
       const sql =
         `SELECT ${q(by)} AS value, COUNT(*) AS n FROM ${q(cols.table)} ` +
         `WHERE ${q(cols.owner!)} = ? ${buildFilterClauses(cols)} ` +
         `GROUP BY ${q(by)}`;
-      rowsOut = args.db
-        .query(sql)
-        .all(ownerId, ...filters) as Array<Record<string, unknown>>;
+      rowsOut = args.db.query(sql).all(ownerId, ...filters) as Array<
+        Record<string, unknown>
+      >;
     }
     return Response.json(rowsOut);
   };
@@ -590,9 +615,7 @@ export function mountResource(args: MountResourceArgs): RouteMap {
     if (ownerId instanceof Response) return ownerId;
     const publicId = req.params?.id;
     if (!publicId) return jsonError(400, "id required");
-    const parentPublicId = cols.parent
-      ? req.params?.[cols.parent.param]
-      : null;
+    const parentPublicId = cols.parent ? req.params?.[cols.parent.param] : null;
     if (cols.parent && !parentPublicId) {
       return jsonError(400, `parent ${cols.parent.param} required`);
     }
@@ -608,6 +631,20 @@ export function mountResource(args: MountResourceArgs): RouteMap {
           | Record<string, unknown>
           | undefined);
     if (!existing) return jsonError(404, "not_found");
+
+    if (args.beforeDelete) {
+      try {
+        const hookResult = await args.beforeDelete({
+          existing: toWire(existing, cols),
+          userId: ownerId as number,
+          cols,
+        });
+        if (hookResult instanceof Response) return hookResult;
+      } catch (err) {
+        return jsonError(400, (err as Error).message || "rejected_by_hook");
+      }
+    }
+
     const scopeBindValue: unknown = cols.parent ? parentPk : ownerId;
     const sql = `DELETE FROM ${q(cols.table)} WHERE ${q(cols.pk)} = ? AND ${q(scopeColName)} = ?`;
     args.db.run(sql, existing.pk_value, scopeBindValue);
@@ -636,11 +673,24 @@ export function mountResource(args: MountResourceArgs): RouteMap {
   // every parent the user owns (SPEC §5.10). Bun's router prefers literal
   // segments over `:id` patterns, so the path is unambiguous.
   const countsRoute = `/api/${resourceName}/counts`;
-  return {
-    [listRoute]: { GET: getList, POST: createOne },
-    [itemRoute]: { PATCH: patchOne, DELETE: deleteOne },
-    [countsRoute]: { GET: getCounts },
-  };
+
+  // SPEC §5.11 — assemble per-route maps then drop any empty buckets so that
+  // omitted methods return real 404s (Bun's router won't match the path at
+  // all) rather than 403s from a handler that exists. Counts is GET-only.
+  const out: RouteMap = {};
+  const listMethods: Record<string, Handler> = {};
+  if (cols.methods.has("GET")) listMethods.GET = getList;
+  if (cols.methods.has("POST")) listMethods.POST = createOne;
+  if (Object.keys(listMethods).length > 0) out[listRoute] = listMethods;
+
+  const itemMethods: Record<string, Handler> = {};
+  if (cols.methods.has("PATCH")) itemMethods.PATCH = patchOne;
+  if (cols.methods.has("DELETE")) itemMethods.DELETE = deleteOne;
+  if (Object.keys(itemMethods).length > 0) out[itemRoute] = itemMethods;
+
+  if (cols.methods.has("GET")) out[countsRoute] = { GET: getCounts };
+
+  return out;
 }
 
 function buildSelectSql(cols: ResolvedColumns, getPolicy: AuthPolicy): string {
@@ -734,10 +784,8 @@ function baseSelectParts(cols: ResolvedColumns): string[] {
     `${qualify(cols.position)} AS position`,
   ];
   if (cols.label) out.push(`${qualify(cols.label)} AS label`);
-  if (cols.updated_at)
-    out.push(`${qualify(cols.updated_at)} AS updated_at`);
-  if (cols.created_at)
-    out.push(`${qualify(cols.created_at)} AS created_at`);
+  if (cols.updated_at) out.push(`${qualify(cols.updated_at)} AS updated_at`);
+  if (cols.created_at) out.push(`${qualify(cols.created_at)} AS created_at`);
   if (cols.meta) out.push(`${qualify(cols.meta)} AS meta`);
   // Parent-scoped wire rows project the parent's public_id (SPEC §5.8) so
   // per-mount useResource SSE handlers can filter cross-parent events.

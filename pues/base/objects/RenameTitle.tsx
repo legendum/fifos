@@ -18,8 +18,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRename } from "./useRename";
 import type { UseResourceResult } from "./useResource";
 
-export type RenameTitleProps = {
-  resource: UseResourceResult;
+export type RenameTitleProps<TExtra = Record<string, unknown>> = {
+  resource: UseResourceResult<TExtra>;
   /** Route segment passed to `useRename`. */
   resourceName: string;
   /** Defaults to "/api". Should match `useResource`'s basePath. */
@@ -34,14 +34,14 @@ export type RenameTitleProps = {
   className?: string;
 };
 
-export function RenameTitle({
+export function RenameTitle<TExtra = Record<string, unknown>>({
   resource,
   resourceName,
   basePath,
   rowId,
   label,
   className,
-}: RenameTitleProps) {
+}: RenameTitleProps<TExtra>) {
   const { rename } = useRename({ resource, resourceName, basePath });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);

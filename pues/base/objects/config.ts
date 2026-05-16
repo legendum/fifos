@@ -29,8 +29,28 @@ export type ResourceConfig = {
    * `/api/fifos/:fifo_ulid` makes pues mount the resource at
    * `<prefix>/<name>` and `<prefix>/<name>/:id`. */
   prefix?: string;
+  /** Whitelist of columns that GET /api/<name> can filter on via URL query
+   * params (SPEC §5.9). `equals` columns match exactly (`?col=value` →
+   * `WHERE col = ?`); `contains` columns match substrings (`?col=value` →
+   * `WHERE col LIKE '%' || ? || '%'`). Filters AND together; unknown params
+   * are ignored. */
+  filter?: { equals?: string[]; contains?: string[] };
+  /** Subset of HTTP methods to mount (SPEC §5.11). When omitted, all four
+   * are mounted. Omitted methods do not exist as routes — requests return
+   * Bun's 404, not a 403 — so this is the right tool when a method has no
+   * valid meaning for the resource (e.g. fifos' `items` cannot be PATCHed;
+   * state transitions go through the public webhook surface instead). */
+  methods?: ReadonlyArray<HttpMethod>;
   timestamp_format?: "unix" | "iso";
 };
+
+export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+const ALL_HTTP_METHODS: ReadonlyArray<HttpMethod> = [
+  "GET",
+  "POST",
+  "PATCH",
+  "DELETE",
+];
 
 export type PuesConfig = {
   app?: { name?: string; db?: string };
@@ -74,16 +94,20 @@ export type ResolvedColumns = {
   parent: ResolvedParent | null;
   /** The original `prefix:` template (only set for parent-scoped resources). */
   prefix: string | null;
+  /** Resolved server-side filter whitelist (SPEC §5.9). Always present — empty
+   * arrays when no filters are configured. Both lists are de-duplicated and
+   * validated against PRAGMA table_info at startup. */
+  filter: { equals: string[]; contains: string[] };
+  /** Resolved set of HTTP methods to mount (SPEC §5.11). Always present —
+   * when the config omits `methods:`, this contains all four. mountResource
+   * filters the route map by this set; omitted methods do not get registered
+   * routes. */
+  methods: ReadonlySet<HttpMethod>;
   timestamp_format: "unix" | "iso";
 };
 
 const REQUIRED_ROLES = ["pk", "public_id", "owner", "position"] as const;
-const OPTIONAL_ROLES = [
-  "label",
-  "updated_at",
-  "created_at",
-  "meta",
-] as const;
+const OPTIONAL_ROLES = ["label", "updated_at", "created_at", "meta"] as const;
 const ALL_ROLES = [...REQUIRED_ROLES, ...OPTIONAL_ROLES] as const;
 
 const DEFAULTS: Record<(typeof ALL_ROLES)[number], string> = {
@@ -278,6 +302,18 @@ export function resolveColumns(
   }
   passthrough.sort();
 
+  const methods = resolveMethods(name, cfg.methods);
+
+  const filterEquals = dedup(cfg.filter?.equals ?? []);
+  const filterContains = dedup(cfg.filter?.contains ?? []);
+  for (const col of [...filterEquals, ...filterContains]) {
+    if (!actual.has(col)) {
+      throw new Error(
+        `[pues] resources.${name}.filter: column "${col}" not found on table "${cfg.table}". Check the schema or remove it from the filter list.`,
+      );
+    }
+  }
+
   return {
     table: cfg.table,
     pk: mapped.pk!,
@@ -291,8 +327,44 @@ export function resolveColumns(
     passthrough,
     parent: resolvedParent,
     prefix: cfg.prefix ?? null,
+    filter: { equals: filterEquals, contains: filterContains },
+    methods,
     timestamp_format: cfg.timestamp_format ?? "unix",
   };
+}
+
+function resolveMethods(
+  name: string,
+  raw: ReadonlyArray<HttpMethod> | undefined,
+): ReadonlySet<HttpMethod> {
+  if (raw === undefined) return new Set(ALL_HTTP_METHODS);
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      `[pues] resources.${name}.methods: must be a non-empty array (SPEC §5.11). Omit the field to mount all four methods.`,
+    );
+  }
+  const out = new Set<HttpMethod>();
+  for (const m of raw) {
+    if (!ALL_HTTP_METHODS.includes(m as HttpMethod)) {
+      throw new Error(
+        `[pues] resources.${name}.methods: unknown HTTP method "${m}". Valid: ${ALL_HTTP_METHODS.join(", ")}.`,
+      );
+    }
+    out.add(m as HttpMethod);
+  }
+  return out;
+}
+
+function dedup(arr: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of arr) {
+    if (!seen.has(x)) {
+      seen.add(x);
+      out.push(x);
+    }
+  }
+  return out;
 }
 
 /** Extract the single `:segment` name from a parent-scoped resource's prefix

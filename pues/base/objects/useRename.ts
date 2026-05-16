@@ -17,36 +17,41 @@ import { useCallback } from "react";
 
 import type { Row, UseResourceResult } from "./useResource";
 
-export type UseRenameOptions = {
-  resource: UseResourceResult;
+export type UseRenameOptions<TExtra = Record<string, unknown>> = {
+  resource: UseResourceResult<TExtra>;
   /** Route segment, e.g. "lists" — used to build the PATCH URL. */
   resourceName: string;
   /** Defaults to "/api". Must match the `useResource` basePath. */
   basePath?: string;
 };
 
-export type RenameOutcome = { ok: true; row: Row | null } | { ok: false };
+export type RenameOutcome<TExtra = Record<string, unknown>> =
+  | { ok: true; row: Row<TExtra> | null }
+  | { ok: false };
 
-export type UseRenameResult = {
+export type UseRenameResult<TExtra = Record<string, unknown>> = {
   /**
    * Rename a row. Trims whitespace; rejects empty strings.
    * On success: rows updated optimistically, then replaced with the
    * server response (so the new slug propagates). On failure: rolls
    * back to the pre-call snapshot.
    */
-  rename: (rowId: string | number, newLabel: string) => Promise<RenameOutcome>;
+  rename: (
+    rowId: string | number,
+    newLabel: string,
+  ) => Promise<RenameOutcome<TExtra>>;
 };
 
-export function useRename({
+export function useRename<TExtra = Record<string, unknown>>({
   resource,
   resourceName,
   basePath = "/api",
-}: UseRenameOptions): UseRenameResult {
+}: UseRenameOptions<TExtra>): UseRenameResult<TExtra> {
   const rename = useCallback(
     async (
       rowId: string | number,
       newLabel: string,
-    ): Promise<RenameOutcome> => {
+    ): Promise<RenameOutcome<TExtra>> => {
       const trimmed = newLabel.trim();
       if (!trimmed) return { ok: false };
 
@@ -77,11 +82,11 @@ export function useRename({
         return { ok: false };
       }
 
-      let row: Row | null = null;
+      let row: Row<TExtra> | null = null;
       try {
         const parsed = (await res.json()) as unknown;
         if (parsed && typeof parsed === "object" && "id" in parsed) {
-          row = parsed as Row;
+          row = parsed as Row<TExtra>;
         }
       } catch {
         // Non-JSON response (or empty). Leave the optimistic state in

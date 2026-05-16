@@ -11,27 +11,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type UseSSEResult, useSSE } from "../sse/useSSE";
+import type { WireRow } from "./wire";
 
-export type Row = {
-  id: string | number;
-  /** Omitted for resources with no label-role mapping (SPEC §5.2). */
-  label?: string;
-  position: number;
-  /** Parent's public_id for parent-scoped resources (SPEC §5.8). The SSE
-   * handler in `useResource` uses this to drop cross-parent events when
-   * the resource is mounted per-view. */
-  parent_id?: string | number;
-  updated_at?: number | string;
-  created_at?: number | string;
-  meta?: Record<string, unknown>;
-  [k: string]: unknown;
-};
+/** Client alias for the wire row shape — a thin re-export so server and
+ * client cannot drift. Generic over `TExtra` exactly like {@link WireRow}:
+ * default `Record<string, unknown>` keeps loose access, narrower types
+ * enable end-to-end typing of passthrough columns. */
+export type Row<TExtra = Record<string, unknown>> = WireRow<TExtra>;
 
-export type UseResourceResult = {
-  rows: Row[];
+export type UseResourceResult<TExtra = Record<string, unknown>> = {
+  rows: Row<TExtra>[];
   loading: boolean;
   error: Error | null;
-  mutate: (next: Row[] | ((prev: Row[]) => Row[])) => void;
+  mutate: (
+    next: Row<TExtra>[] | ((prev: Row<TExtra>[]) => Row<TExtra>[]),
+  ) => void;
   reload: () => void;
   /** When `pageSize` is set: fetches the next page (`?after_position=<last>`)
    * and appends results to `rows`. No-op if `hasMore` is false or pagination
@@ -68,12 +62,20 @@ export type UseResourceOptions = {
    * tighten in pagination mode: events for rows not in cache are dropped
    * (otherwise they'd pollute the partial-cache view). */
   pageSize?: number;
+  /** Server-side filter params (SPEC §5.9). Each key/value pair is appended
+   * to the fetch URL as a query param. Only columns whitelisted in the
+   * resource's `filter.equals` / `filter.contains` config are honored;
+   * unknown params are ignored server-side. Changes trigger a refetch. SSE
+   * events are NOT filtered client-side (superset model — the cache may
+   * contain rows that don't match the active filter; consumers re-filter at
+   * render time if it matters). */
+  filters?: Record<string, string | number>;
 };
 
-export function useResource(
+export function useResource<TExtra = Record<string, unknown>>(
   name: string,
   options: UseResourceOptions = {},
-): UseResourceResult {
+): UseResourceResult<TExtra> {
   const basePath = options.basePath ?? "/api";
   const ssePath = options.ssePath ?? "/api/events";
   const sseEnabled = options.sseEnabled ?? true;
@@ -81,14 +83,40 @@ export function useResource(
   const parentId = options.parentId;
   const pageSize = options.pageSize;
   const paginated = typeof pageSize === "number" && pageSize > 0;
+  const filters = options.filters;
+  // Filters trigger refetch on change; use a stable JSON serialization as
+  // the effect-dep key so {status: "todo"} and {status: "todo"} compare
+  // equal across renders.
+  const filtersKey = filters ? JSON.stringify(filters) : "";
 
-  const [rows, setRows] = useState<Row[]>([]);
+  const [rows, setRows] = useState<Row<TExtra>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const reloadRef = useRef(0);
   const [reloadTick, setReloadTick] = useState(0);
+
+  const buildUrl = useCallback(
+    (extras?: Record<string, string | number>) => {
+      const params = new URLSearchParams();
+      if (paginated) params.set("limit", String(pageSize));
+      if (filters) {
+        for (const [k, v] of Object.entries(filters)) {
+          if (v !== undefined && v !== null && v !== "")
+            params.set(k, String(v));
+        }
+      }
+      if (extras) {
+        for (const [k, v] of Object.entries(extras)) {
+          params.set(k, String(v));
+        }
+      }
+      const qs = params.toString();
+      return qs ? `${basePath}/${name}?${qs}` : `${basePath}/${name}`;
+    },
+    [basePath, name, paginated, pageSize, filters],
+  );
 
   useEffect(() => {
     if (!enabled) {
@@ -99,15 +127,12 @@ export function useResource(
     setLoading(true);
     setError(null);
     setHasMore(false);
-    const url = paginated
-      ? `${basePath}/${name}?limit=${pageSize}`
-      : `${basePath}/${name}`;
-    fetch(url, { credentials: "include" })
+    fetch(buildUrl(), { credentials: "include" })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((data: Row[]) => {
+      .then((data: Row<TExtra>[]) => {
         if (myTick !== reloadRef.current) return;
         const fetched = Array.isArray(data) ? data : [];
         setRows(fetched);
@@ -119,7 +144,19 @@ export function useResource(
         setError(e);
         setLoading(false);
       });
-  }, [name, basePath, reloadTick, enabled, paginated, pageSize]);
+    // `buildUrl` itself is memoized over the same set of deps below; we
+    // list them here so the effect re-runs when any of them change (filter
+    // changes trigger a refetch as documented in the option).
+  }, [
+    name,
+    basePath,
+    reloadTick,
+    enabled,
+    paginated,
+    pageSize,
+    filtersKey,
+    buildUrl,
+  ]);
 
   const loadMore = useCallback(() => {
     if (!paginated || !enabled) return;
@@ -127,13 +164,14 @@ export function useResource(
     const last = rows[rows.length - 1];
     if (!last) return;
     setLoadingMore(true);
-    const url = `${basePath}/${name}?after_position=${last.position}&limit=${pageSize}`;
-    fetch(url, { credentials: "include" })
+    fetch(buildUrl({ after_position: last.position }), {
+      credentials: "include",
+    })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((data: Row[]) => {
+      .then((data: Row<TExtra>[]) => {
         const next = Array.isArray(data) ? data : [];
         setRows((prev) => {
           // Defensive dedup — SSE may have inserted some of these rows
@@ -147,85 +185,86 @@ export function useResource(
       .catch(() => {
         setLoadingMore(false);
       });
-  }, [paginated, enabled, loadingMore, hasMore, rows, basePath, name, pageSize]);
+  }, [paginated, enabled, loadingMore, hasMore, rows, buildUrl, pageSize]);
 
-  const handlers = useMemo(
-    () => {
-      // SPEC §5.8: when this hook is bound to a parent-scoped view via
-      // `parentId`, drop events whose `parent_id` differs. Events are
-      // delivered per-user, so a user with multiple parents (e.g. multiple
-      // fifos) receives sibling events on the same stream. Without this
-      // filter, every view's cache would accumulate cross-parent rows.
-      //
-      // Pagination intentionally does NOT tighten these rules — pues
-      // accepts a superset of events. A `.updated` for a row in an
-      // unloaded range simply inserts it into the cache (insertSorted
-      // places it at its position; if it lies beyond the loaded prefix,
-      // it appears at the tail, which is harmless for queue-shaped
-      // resources and rare for the others). Trade-off: simpler contract
-      // over a minor visual quirk in narrow edge cases.
-      const matchesScope = (eventParentId: unknown): boolean => {
-        if (parentId === undefined) return true;
-        return eventParentId === parentId;
-      };
-      return {
-        [`${name}.created`]: (data: unknown) => {
-          if (!isRow(data)) return;
-          if (!matchesScope(data.parent_id)) return;
-          setRows((prev) => insertSorted(prev, stripOpId(data)));
-        },
-        [`${name}.updated`]: (data: unknown) => {
-          if (!isRow(data)) return;
-          if (!matchesScope(data.parent_id)) return;
-          setRows((prev) => replaceById(prev, stripOpId(data)));
-        },
-        [`${name}.reordered`]: (data: unknown) => {
-          if (!data || typeof data !== "object") return;
-          const { id, position, parent_id } = data as {
-            id?: unknown;
-            position?: unknown;
-            parent_id?: unknown;
-          };
-          if (
-            typeof position !== "number" ||
-            (typeof id !== "string" && typeof id !== "number")
-          )
-            return;
-          if (!matchesScope(parent_id)) return;
-          setRows((prev) =>
-            insertSorted(
-              prev.filter((r) => r.id !== id),
-              {
-                ...(prev.find((r) => r.id === id) ??
-                  ({ id, position } as Row)),
-                position,
-              },
-            ),
-          );
-        },
-        [`${name}.deleted`]: (data: unknown) => {
-          if (!data || typeof data !== "object") return;
-          const { id, parent_id } = data as {
-            id?: unknown;
-            parent_id?: unknown;
-          };
-          if (typeof id !== "string" && typeof id !== "number") return;
-          if (!matchesScope(parent_id)) return;
-          setRows((prev) => prev.filter((r) => r.id !== id));
-        },
-      };
-    },
-    [name, parentId],
-  );
+  const handlers = useMemo(() => {
+    // SPEC §5.8: when this hook is bound to a parent-scoped view via
+    // `parentId`, drop events whose `parent_id` differs. Events are
+    // delivered per-user, so a user with multiple parents (e.g. multiple
+    // fifos) receives sibling events on the same stream. Without this
+    // filter, every view's cache would accumulate cross-parent rows.
+    //
+    // Pagination intentionally does NOT tighten these rules — pues
+    // accepts a superset of events. A `.updated` for a row in an
+    // unloaded range simply inserts it into the cache (insertSorted
+    // places it at its position; if it lies beyond the loaded prefix,
+    // it appears at the tail, which is harmless for queue-shaped
+    // resources and rare for the others). Trade-off: simpler contract
+    // over a minor visual quirk in narrow edge cases.
+    const matchesScope = (eventParentId: unknown): boolean => {
+      if (parentId === undefined) return true;
+      return eventParentId === parentId;
+    };
+    return {
+      [`${name}.created`]: (data: unknown) => {
+        if (!isRow(data)) return;
+        if (!matchesScope(data.parent_id)) return;
+        const row = stripOpId(data) as Row<TExtra>;
+        setRows((prev) => insertSorted(prev, row));
+      },
+      [`${name}.updated`]: (data: unknown) => {
+        if (!isRow(data)) return;
+        if (!matchesScope(data.parent_id)) return;
+        const row = stripOpId(data) as Row<TExtra>;
+        setRows((prev) => replaceById(prev, row));
+      },
+      [`${name}.reordered`]: (data: unknown) => {
+        if (!data || typeof data !== "object") return;
+        const { id, position, parent_id } = data as {
+          id?: unknown;
+          position?: unknown;
+          parent_id?: unknown;
+        };
+        if (
+          typeof position !== "number" ||
+          (typeof id !== "string" && typeof id !== "number")
+        )
+          return;
+        if (!matchesScope(parent_id)) return;
+        setRows((prev) =>
+          insertSorted(
+            prev.filter((r) => r.id !== id),
+            {
+              ...(prev.find((r) => r.id === id) ??
+                ({ id, position } as Row<TExtra>)),
+              position,
+            },
+          ),
+        );
+      },
+      [`${name}.deleted`]: (data: unknown) => {
+        if (!data || typeof data !== "object") return;
+        const { id, parent_id } = data as {
+          id?: unknown;
+          parent_id?: unknown;
+        };
+        if (typeof id !== "string" && typeof id !== "number") return;
+        if (!matchesScope(parent_id)) return;
+        setRows((prev) => prev.filter((r) => r.id !== id));
+      },
+    };
+  }, [name, parentId]);
 
   const sse = useSSE(handlers, {
     path: ssePath,
     enabled: enabled && sseEnabled,
   });
 
-  const mutate: UseResourceResult["mutate"] = useCallback((next) => {
+  const mutate: UseResourceResult<TExtra>["mutate"] = useCallback((next) => {
     setRows((prev) =>
-      typeof next === "function" ? (next as (p: Row[]) => Row[])(prev) : next,
+      typeof next === "function"
+        ? (next as (p: Row<TExtra>[]) => Row<TExtra>[])(prev)
+        : next,
     );
   }, []);
   const reload = useCallback(() => setReloadTick((n) => n + 1), []);
@@ -249,22 +288,22 @@ function isRow(v: unknown): v is Row {
   return !!v && typeof v === "object" && "id" in v && "position" in v;
 }
 
-function stripOpId(row: Row): Row {
+function stripOpId<T extends Row>(row: T): T {
   if ("op_id" in row) {
-    const { op_id: _omit, ...rest } = row as Row & { op_id?: unknown };
-    return rest as Row;
+    const { op_id: _omit, ...rest } = row as T & { op_id?: unknown };
+    return rest as T;
   }
   return row;
 }
 
-function insertSorted(rows: Row[], row: Row): Row[] {
+function insertSorted<T extends Row>(rows: T[], row: T): T[] {
   const without = rows.filter((r) => r.id !== row.id);
   let i = 0;
   while (i < without.length && without[i]!.position < row.position) i++;
   return [...without.slice(0, i), row, ...without.slice(i)];
 }
 
-function replaceById(rows: Row[], row: Row): Row[] {
+function replaceById<T extends Row>(rows: T[], row: T): T[] {
   let found = false;
   const out = rows.map((r) => {
     if (r.id === row.id) {

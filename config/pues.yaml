@@ -22,9 +22,17 @@ resources:
   # a user. Items have no `name` column — `label` drops to null per the
   # §5.2 relaxation, and the wire row carries no `label` key. Clients
   # render row.data (truncated) themselves.
+  #
+  # Method opt-out (SPEC §5.11): PATCH and DELETE do not mount. Items
+  # have a fixed state machine (todo → lock → done|fail|skip); transitions
+  # happen exclusively via /w/:ulid/{done,fail,skip,retry,pull}. A generic
+  # PATCH would let a client bypass the state machine; a generic DELETE
+  # would orphan the queue's position counter and billing record. Pues
+  # broadcasts items.created on POST so useResource("items") stays live.
   items:
     table: items
     prefix: /api/fifos/:fifo_ulid
     parent:
       column: fifo_id
       table:  fifos
+    methods: [GET, POST]

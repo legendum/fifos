@@ -1,6 +1,7 @@
 export { AddButton, type AddButtonProps } from "./AddButton";
 export {
   type ColumnRoles,
+  type HttpMethod,
   loadPuesConfig,
   type PuesConfig,
   type ResolvedColumns,
@@ -11,6 +12,8 @@ export { FilterBar, type FilterBarProps } from "./FilterBar";
 export {
   type AuthConfig,
   type AuthPolicy,
+  type BeforeDeleteContext,
+  type BeforeDeleteHook,
   type BeforeInsertContext,
   type BeforeInsertHook,
   type BeforeUpdateContext,

@@ -15,8 +15,8 @@ import { useCallback } from "react";
 
 import type { Row, UseResourceResult } from "./useResource";
 
-export type UseDeleteOptions = {
-  resource: UseResourceResult;
+export type UseDeleteOptions<TExtra = Record<string, unknown>> = {
+  resource: UseResourceResult<TExtra>;
   /** Route segment, e.g. "lists" — used to build the DELETE URL. */
   resourceName: string;
   /** Defaults to "/api". Must match the `useResource` basePath. */
@@ -37,8 +37,8 @@ export type UseDeleteResult = {
  * The DELETE dance, factored out for testability. The hook is a thin
  * wrapper that binds it to `useCallback`.
  */
-export async function performDelete(
-  resource: UseResourceResult,
+export async function performDelete<TExtra = Record<string, unknown>>(
+  resource: UseResourceResult<TExtra>,
   rowId: Row["id"],
   resourceName: string,
   basePath: string,
@@ -66,11 +66,11 @@ export async function performDelete(
   return { ok: true };
 }
 
-export function useDelete({
+export function useDelete<TExtra = Record<string, unknown>>({
   resource,
   resourceName,
   basePath = "/api",
-}: UseDeleteOptions): UseDeleteResult {
+}: UseDeleteOptions<TExtra>): UseDeleteResult {
   const del = useCallback(
     (rowId: Row["id"]) =>
       performDelete(resource, rowId, resourceName, basePath),
