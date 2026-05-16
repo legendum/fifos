@@ -1,0 +1,251 @@
+/* base/objects/objects.css — minimal styling for <ObjectList>.
+ *
+ * Variables-only: all colours/spacing come from --pues-* tokens defined in
+ * base/theme/theme.css. No element selectors, no positional rules.
+ */
+
+.pues-object-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pues-list-gap, 0.5rem);
+}
+
+.pues-object-row {
+  padding: var(--pues-row-padding, 0.75rem 1rem);
+  background: var(--pues-row-bg, transparent);
+  color: var(--pues-fg, inherit);
+  border: 1px solid var(--pues-border, transparent);
+  border-radius: var(--pues-radius, 0.5rem);
+}
+
+.pues-object-row__label {
+  font: inherit;
+  color: inherit;
+}
+
+.pues-object-list__loading,
+.pues-object-list__empty,
+.pues-object-list__error {
+  padding: var(--pues-row-padding, 0.75rem 1rem);
+  color: var(--pues-muted-fg, inherit);
+}
+
+.pues-object-list__error {
+  color: var(--pues-error-fg, #b00);
+}
+
+.pues-add-button {
+  position: fixed;
+  right: var(--pues-fab-offset, 1rem);
+  bottom: var(--pues-fab-offset, 1rem);
+  width: var(--pues-fab-size, 3rem);
+  height: var(--pues-fab-size, 3rem);
+  border-radius: 50%;
+  border: none;
+  background: var(--pues-accent, #1e90ff);
+  color: var(--pues-accent-fg, #fff);
+  font-size: var(--pues-fab-glyph-size, 1.5rem);
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--pues-fab-shadow, 0 2px 8px rgba(0, 0, 0, 0.25));
+}
+
+.pues-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: var(--pues-row-padding, 0.75rem 1rem);
+}
+
+.pues-add-form__input {
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--pues-border, #ccc);
+  border-radius: var(--pues-radius, 0.5rem);
+  background: var(--pues-input-bg, transparent);
+  color: inherit;
+}
+
+.pues-add-form__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pues-add-form__submit,
+.pues-add-form__cancel {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--pues-border, #ccc);
+  border-radius: var(--pues-radius, 0.5rem);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pues-add-form__submit {
+  background: var(--pues-accent, #1e90ff);
+  color: var(--pues-accent-fg, #fff);
+  border-color: var(--pues-accent, #1e90ff);
+}
+
+.pues-add-form__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pues-add-form__error {
+  margin: 0;
+  color: var(--pues-error-fg, #b00);
+  font-size: 0.875rem;
+}
+
+/* FilterBar — controlled filter input chrome. Pair with useFilter for logic. */
+.pues-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 12px;
+  min-height: 44px;
+  background: var(--pues-input-bg, transparent);
+  border: 1px solid var(--pues-border, #ccc);
+  border-radius: var(--pues-radius, 0.5rem);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.pues-filter-bar:focus-within {
+  border-color: var(--pues-accent, #1e90ff);
+  box-shadow: 0 0 0 1px var(--pues-accent-glow, rgba(30, 144, 255, 0.3));
+}
+.pues-filter-bar-icon {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--pues-muted-fg, currentColor);
+}
+.pues-filter-bar-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.pues-filter-bar-input::placeholder {
+  color: var(--pues-muted-fg, currentColor);
+  opacity: 0.7;
+}
+.pues-filter-bar-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.pues-filter-bar-clear {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 -4px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pues-radius, 0.5rem);
+  background: transparent;
+  color: var(--pues-muted-fg, currentColor);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pues-filter-bar-clear:hover {
+  background: var(--pues-row-bg-hover, rgba(0, 0, 0, 0.05));
+  color: inherit;
+}
+
+/* ObjectDetail — header (back + title-with-inline-rename + actions) + body slot. */
+.pues-object-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Layout only — no padding, no border. Consumers add chrome via
+ * `headerClassName` (e.g. todos passes `screen-header`). */
+.pues-object-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Minimal button reset; consumers add their own styling via `backClassName`
+ * (e.g. todos passes `back-btn`). pues only sets layout-related rules. */
+.pues-object-detail-back {
+  flex-shrink: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.pues-object-detail-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pues-detail-center-gap, 4px);
+}
+.pues-object-detail-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.pues-object-detail-subtitle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.pues-object-detail-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pues-object-detail-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* RenameTitle — click-to-edit title. The same `.pues-rename-title` class
+ * is applied to both the button (display state) and the input (edit
+ * state); consumers append their own class to control font/size/color. */
+.pues-rename-title {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+input.pues-rename-title {
+  cursor: text;
+  outline: none;
+  border: 1px solid var(--pues-accent, #1e90ff);
+  border-radius: var(--pues-radius, 0.5rem);
+  background: var(--pues-input-bg, transparent);
+}

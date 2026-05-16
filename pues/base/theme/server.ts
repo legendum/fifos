@@ -20,9 +20,9 @@ function parseMeta(raw: string | null | undefined): Record<string, unknown> {
 }
 
 export function getTheme(db: Database, userId: number): ThemePref | null {
-  const row = db
-    .query("SELECT meta FROM users WHERE id = ?")
-    .get(userId) as { meta: string } | undefined;
+  const row = db.query("SELECT meta FROM users WHERE id = ?").get(userId) as
+    | { meta: string }
+    | undefined;
   if (!row) return null;
   const meta = parseMeta(row.meta);
   return isThemePref(meta.theme) ? meta.theme : null;
@@ -32,9 +32,9 @@ export function setTheme(db: Database, userId: number, value: ThemePref): void {
   if (!isThemePref(value)) {
     throw new Error(`Invalid theme: ${String(value)}`);
   }
-  const row = db
-    .query("SELECT meta FROM users WHERE id = ?")
-    .get(userId) as { meta: string } | undefined;
+  const row = db.query("SELECT meta FROM users WHERE id = ?").get(userId) as
+    | { meta: string }
+    | undefined;
   if (!row) throw new Error(`User ${userId} not found`);
   const merged = { ...parseMeta(row.meta), theme: value };
   db.run(

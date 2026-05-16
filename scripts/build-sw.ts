@@ -38,6 +38,10 @@ const additionalManifestEntries: { url: string; revision: string }[] = [
     url: "/pues/theme.css",
     revision: revisionFor("pues/base/theme/theme.css"),
   },
+  {
+    url: "/pues/objects.css",
+    revision: revisionFor("pues/base/objects/objects.css"),
+  },
   { url: "/manifest.json", revision: revisionFor("src/web/manifest.json") },
 ];
 

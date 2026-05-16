@@ -1,4 +1,10 @@
 import { join, resolve } from "node:path";
+import {
+  loadPuesConfig,
+  mountResource,
+  resolveColumns,
+} from "pues/base/objects";
+import { sseRoute } from "pues/base/sse";
 import { setAuthCookieHeader } from "../lib/auth.js";
 import { closeTabs } from "../lib/billing.js";
 import { FIFOS_PURGE_INTERVAL_SECONDS, PORT } from "../lib/constants.js";
@@ -6,7 +12,10 @@ import { getDb } from "../lib/db.js";
 import { isSelfHosted, LOCAL_USER_EMAIL } from "../lib/mode.js";
 import { sweepRetention } from "../lib/purge.js";
 import { seedDefaultFifosForNewUser } from "../lib/seed-default-fifos.js";
-import { requireAuthAsync } from "./auth-middleware.js";
+import {
+  getAuthUserIdWithBearer,
+  requireAuthAsync,
+} from "./auth-middleware.js";
 import * as authHandlers from "./handlers/auth.js";
 import * as fifosHandlers from "./handlers/fifos.js";
 import * as settingsHandlers from "./handlers/settings.js";
@@ -67,6 +76,7 @@ async function serveIndex(): Promise<Response> {
     <link rel="apple-touch-icon" href="/fifos-192.png" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="stylesheet" href="/pues/theme.css" />
+    <link rel="stylesheet" href="/pues/objects.css" />
     <link rel="stylesheet" href="/main.css" />
   </head>
   <body>
@@ -140,6 +150,45 @@ const legendumMiddleware = legendumSdk.isConfigured()
     })
   : null;
 
+// --- pues role-mapped resources (SPEC §5.8) + per-user SSE (SPEC §7) ---
+// Iter 6 lands the parent-scoped contract in fifos' items resource. The
+// bespoke `/`, `/:slug`, and `/w/:ulid/*` routes continue to own writes
+// (creates flow through the credit-billable webhook; slug + max_retries
+// invariants live in the createFifo handler). pues' /api/fifos/:fifo_ulid/items
+// endpoint is the new authenticated REST surface — items already lacked
+// one, so this is a pure additive adoption.
+const puesConfig = await loadPuesConfig();
+const fifosResourceCfg = puesConfig.resources?.fifos;
+const itemsResourceCfg = puesConfig.resources?.items;
+if (!fifosResourceCfg || !itemsResourceCfg) {
+  throw new Error(
+    "config/pues.yaml: `resources.fifos` and `resources.items` are required.",
+  );
+}
+
+const resolvePuesUser = async (req: Request): Promise<number | null> => {
+  if (isSelfHosted()) {
+    const db = getDb();
+    const row = db.query("SELECT id FROM users LIMIT 1").get() as {
+      id: number;
+    } | null;
+    return row?.id ?? null;
+  }
+  return await getAuthUserIdWithBearer(req);
+};
+
+const puesSse = sseRoute({ resolveUser: resolvePuesUser });
+
+const fifosCols = resolveColumns(getDb(), "fifos", fifosResourceCfg);
+const puesItemsRoutes = mountResource({
+  db: getDb(),
+  name: "items",
+  config: itemsResourceCfg,
+  parentCols: fifosCols,
+  resolveUser: resolvePuesUser,
+  broadcast: puesSse.broadcast,
+});
+
 const webhookCorsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -205,6 +254,13 @@ export default {
           "/auth/logout": { POST: () => authHandlers.postLogout() },
         }
       : {}),
+    // pues-mounted parent-scoped resource: items. Items remain primarily
+    // written via /w/:ulid/* (webhook, public credential, billable); these
+    // routes add an authenticated REST surface for programmatic clients.
+    ...puesItemsRoutes,
+    // pues per-user SSE stream — coexists with the bespoke /w/:ulid/items
+    // and /f/fifos/items streams during the dual-routing phase.
+    ...puesSse.routes,
   },
   async fetch(req: Request) {
     const url = new URL(req.url);
@@ -223,6 +279,12 @@ export default {
       if (path === "/pues/theme.css") {
         return serveStatic(
           join(root, "pues/base/theme/theme.css"),
+          "text/css",
+        );
+      }
+      if (path === "/pues/objects.css") {
+        return serveStatic(
+          join(root, "pues/base/objects/objects.css"),
           "text/css",
         );
       }

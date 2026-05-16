@@ -2,3 +2,29 @@
 # Add entries here to adopt more of pues over time, then run `bun run pues`.
 parts:
   - theme
+  - objects
+  - sse
+
+app:
+  name: fifos
+  db: data/fifos.db
+
+# Role mapping for base/objects/ — see SPEC §5.2 + §5.8.
+resources:
+
+  # Top-level: fifos.fifos matches every default in §5.3
+  # (id, ulid, user_id, name, position, created_at, updated_at).
+  # App-owned columns (slug, seq, max_retries) pass through.
+  fifos:
+    table: fifos
+
+  # Parent-scoped (SPEC §5.8): items belong to a fifo, which belongs to
+  # a user. Items have no `name` column — `label` drops to null per the
+  # §5.2 relaxation, and the wire row carries no `label` key. Clients
+  # render row.data (truncated) themselves.
+  items:
+    table: items
+    prefix: /api/fifos/:fifo_ulid
+    parent:
+      column: fifo_id
+      table:  fifos
