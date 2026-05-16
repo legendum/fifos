@@ -33,6 +33,15 @@ export type UseResourceResult = {
   error: Error | null;
   mutate: (next: Row[] | ((prev: Row[]) => Row[])) => void;
   reload: () => void;
+  /** When `pageSize` is set: fetches the next page (`?after_position=<last>`)
+   * and appends results to `rows`. No-op if `hasMore` is false or pagination
+   * is not enabled. */
+  loadMore: () => void;
+  /** True when the last fetch returned a full page — there may be more rows
+   * beyond the cursor. Always false outside pagination mode. */
+  hasMore: boolean;
+  /** True while a `loadMore` request is in flight. */
+  loadingMore: boolean;
   /** Mint a new op_id; HTTP mutations should send this in `X-Op-Id`
    * so the SSE echo carrying it is dropped client-side. */
   newOpId: UseSSEResult["newOpId"];
@@ -53,6 +62,12 @@ export type UseResourceOptions = {
    * keeping per-view caches scoped to the URL's parent. Omit (or set
    * undefined) for top-level resources. */
   parentId?: string | number;
+  /** Enable cursor-based pagination (SPEC §6). When set, the initial fetch
+   * requests `?limit=pageSize` and `loadMore()` fetches the next page via
+   * `?after_position=<last.position>&limit=pageSize`. SSE handlers also
+   * tighten in pagination mode: events for rows not in cache are dropped
+   * (otherwise they'd pollute the partial-cache view). */
+  pageSize?: number;
 };
 
 export function useResource(
@@ -64,10 +79,14 @@ export function useResource(
   const sseEnabled = options.sseEnabled ?? true;
   const enabled = options.enabled ?? true;
   const parentId = options.parentId;
+  const pageSize = options.pageSize;
+  const paginated = typeof pageSize === "number" && pageSize > 0;
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const reloadRef = useRef(0);
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -79,22 +98,56 @@ export function useResource(
     const myTick = ++reloadRef.current;
     setLoading(true);
     setError(null);
-    fetch(`${basePath}/${name}`, { credentials: "include" })
+    setHasMore(false);
+    const url = paginated
+      ? `${basePath}/${name}?limit=${pageSize}`
+      : `${basePath}/${name}`;
+    fetch(url, { credentials: "include" })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((data: Row[]) => {
         if (myTick !== reloadRef.current) return;
-        setRows(Array.isArray(data) ? data : []);
+        const fetched = Array.isArray(data) ? data : [];
+        setRows(fetched);
         setLoading(false);
+        if (paginated) setHasMore(fetched.length === pageSize);
       })
       .catch((e: Error) => {
         if (myTick !== reloadRef.current) return;
         setError(e);
         setLoading(false);
       });
-  }, [name, basePath, reloadTick, enabled]);
+  }, [name, basePath, reloadTick, enabled, paginated, pageSize]);
+
+  const loadMore = useCallback(() => {
+    if (!paginated || !enabled) return;
+    if (loadingMore || !hasMore) return;
+    const last = rows[rows.length - 1];
+    if (!last) return;
+    setLoadingMore(true);
+    const url = `${basePath}/${name}?after_position=${last.position}&limit=${pageSize}`;
+    fetch(url, { credentials: "include" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: Row[]) => {
+        const next = Array.isArray(data) ? data : [];
+        setRows((prev) => {
+          // Defensive dedup — SSE may have inserted some of these rows
+          // already between the loadMore call and its response.
+          const seen = new Set(prev.map((r) => r.id));
+          return [...prev, ...next.filter((r) => !seen.has(r.id))];
+        });
+        setHasMore(next.length === pageSize);
+        setLoadingMore(false);
+      })
+      .catch(() => {
+        setLoadingMore(false);
+      });
+  }, [paginated, enabled, loadingMore, hasMore, rows, basePath, name, pageSize]);
 
   const handlers = useMemo(
     () => {
@@ -107,6 +160,12 @@ export function useResource(
         if (parentId === undefined) return true;
         return eventParentId === parentId;
       };
+      // SPEC §6: in pagination mode the cache holds only the loaded
+      // prefix. `.updated` / `.reordered` for rows beyond the cursor
+      // must NOT fall back to "insert into cache" — that would silently
+      // pollute the page with rows the user hasn't paginated to yet.
+      // `.created` still appends because new rows always get max+STEP
+      // positions and belong at the tail.
       return {
         [`${name}.created`]: (data: unknown) => {
           if (!isRow(data)) return;
@@ -116,7 +175,11 @@ export function useResource(
         [`${name}.updated`]: (data: unknown) => {
           if (!isRow(data)) return;
           if (!matchesScope(data.parent_id)) return;
-          setRows((prev) => replaceById(prev, stripOpId(data)));
+          setRows((prev) => {
+            const exists = prev.some((r) => r.id === data.id);
+            if (!exists && paginated) return prev;
+            return replaceById(prev, stripOpId(data));
+          });
         },
         [`${name}.reordered`]: (data: unknown) => {
           if (!data || typeof data !== "object") return;
@@ -131,16 +194,14 @@ export function useResource(
           )
             return;
           if (!matchesScope(parent_id)) return;
-          setRows((prev) =>
-            insertSorted(
+          setRows((prev) => {
+            const existing = prev.find((r) => r.id === id);
+            if (!existing && paginated) return prev;
+            return insertSorted(
               prev.filter((r) => r.id !== id),
-              {
-                ...(prev.find((r) => r.id === id) ??
-                  ({ id, position } as Row)),
-                position,
-              },
-            ),
-          );
+              { ...(existing ?? ({ id, position } as Row)), position },
+            );
+          });
         },
         [`${name}.deleted`]: (data: unknown) => {
           if (!data || typeof data !== "object") return;
@@ -154,7 +215,7 @@ export function useResource(
         },
       };
     },
-    [name, parentId],
+    [name, parentId, paginated],
   );
 
   const sse = useSSE(handlers, {
@@ -169,7 +230,17 @@ export function useResource(
   }, []);
   const reload = useCallback(() => setReloadTick((n) => n + 1), []);
 
-  return { rows, loading, error, mutate, reload, newOpId: sse.newOpId };
+  return {
+    rows,
+    loading,
+    error,
+    mutate,
+    reload,
+    loadMore,
+    hasMore,
+    loadingMore,
+    newOpId: sse.newOpId,
+  };
 }
 
 function isRow(v: unknown): v is Row {

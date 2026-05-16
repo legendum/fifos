@@ -185,22 +185,38 @@ export function mountResource(args: MountResourceArgs): RouteMap {
   const getList: Handler = async (req) => {
     const ownerId = await resolveOwner(req, args.resolveUser, auth.get);
     if (ownerId instanceof Response) return ownerId;
-    const { limit, offset } = parsePagination(req.url);
+    const { limit, offset, afterPosition } = parsePagination(req.url);
+    // The cursor is bound twice in the SQL — once for the IS NULL check and
+    // once for the comparison. SQLite short-circuits on the NULL branch.
     let rows: Array<Record<string, unknown>>;
     if (cols.parent) {
       const parentPublicId = req.params?.[cols.parent.param];
       if (!parentPublicId) {
         return jsonError(400, `parent ${cols.parent.param} required`);
       }
-      rows = selectStmt.all(parentPublicId, ownerId, limit, offset) as Array<
-        Record<string, unknown>
-      >;
+      rows = selectStmt.all(
+        parentPublicId,
+        ownerId,
+        afterPosition,
+        afterPosition,
+        limit,
+        offset,
+      ) as Array<Record<string, unknown>>;
     } else if (auth.get === "user") {
-      rows = selectStmt.all(ownerId, limit, offset) as Array<
-        Record<string, unknown>
-      >;
+      rows = selectStmt.all(
+        ownerId,
+        afterPosition,
+        afterPosition,
+        limit,
+        offset,
+      ) as Array<Record<string, unknown>>;
     } else {
-      rows = selectStmt.all(limit, offset) as Array<Record<string, unknown>>;
+      rows = selectStmt.all(
+        afterPosition,
+        afterPosition,
+        limit,
+        offset,
+      ) as Array<Record<string, unknown>>;
     }
     return Response.json(rows.map((r) => toWire(r, cols)));
   };
@@ -574,18 +590,22 @@ function buildSelectSql(cols: ResolvedColumns, getPolicy: AuthPolicy): string {
     // SPEC §5.8 — public-read is rejected at startup for parent-scoped.
     // ORDER BY refs are qualified because position/pk can exist on both
     // child and parent (SQLite throws "ambiguous column" otherwise).
+    // The `(? IS NULL OR position > ?)` predicate is the cursor for
+    // pagination — the same value is bound twice; SQLite short-circuits
+    // when the cursor is null (SPEC §6).
     const child = q(cols.table);
     return (
       `SELECT ${parts.join(", ")} FROM ${child} ` +
       `JOIN ${q(cols.parent.table)} ON ${child}.${q(cols.parent.column)} = ${q(cols.parent.table)}.${q(cols.parent.pk)} ` +
       `WHERE ${q(cols.parent.table)}.${q(cols.parent.public_id)} = ? AND ${q(cols.parent.table)}.${q(cols.parent.owner)} = ? ` +
+      `AND (? IS NULL OR ${child}.${q(cols.position)} > ?) ` +
       `ORDER BY ${child}.${q(cols.position)} ASC, ${child}.${q(cols.pk)} ASC ` +
       `LIMIT ? OFFSET ?`
     );
   }
-  const where = getPolicy === "user" ? `WHERE ${q(cols.owner!)} = ?` : "";
+  const where = getPolicy === "user" ? `WHERE ${q(cols.owner!)} = ?` : "WHERE 1=1";
   const orderBy = `ORDER BY ${q(cols.position)} ASC, ${q(cols.pk)} ASC`;
-  return `SELECT ${parts.join(", ")} FROM ${q(cols.table)} ${where} ${orderBy} LIMIT ? OFFSET ?`;
+  return `SELECT ${parts.join(", ")} FROM ${q(cols.table)} ${where} AND (? IS NULL OR ${q(cols.position)} > ?) ${orderBy} LIMIT ? OFFSET ?`;
 }
 
 function buildFindOneSql(cols: ResolvedColumns): string {
@@ -632,10 +652,18 @@ function baseSelectParts(cols: ResolvedColumns): string[] {
   return out;
 }
 
-function parsePagination(urlStr: string): { limit: number; offset: number } {
+function parsePagination(urlStr: string): {
+  limit: number;
+  offset: number;
+  /** Cursor by position — when set, only rows with `position > afterPosition`
+   * are returned (SPEC §6). null means no cursor; the SQL short-circuits the
+   * `(? IS NULL OR position > ?)` predicate. */
+  afterPosition: number | null;
+} {
   const url = new URL(urlStr);
   const rawLimit = url.searchParams.get("limit");
   const rawOffset = url.searchParams.get("offset");
+  const rawAfter = url.searchParams.get("after_position");
   const lim = rawLimit == null ? DEFAULT_LIMIT : Number(rawLimit);
   const off = rawOffset == null ? 0 : Number(rawOffset);
   const limit = Math.max(
@@ -643,7 +671,13 @@ function parsePagination(urlStr: string): { limit: number; offset: number } {
     Math.min(MAX_LIMIT, Number.isFinite(lim) ? Math.floor(lim) : DEFAULT_LIMIT),
   );
   const offset = Math.max(0, Number.isFinite(off) ? Math.floor(off) : 0);
-  return { limit, offset };
+  const after =
+    rawAfter == null
+      ? null
+      : Number.isFinite(Number(rawAfter))
+        ? Math.floor(Number(rawAfter))
+        : null;
+  return { limit, offset, afterPosition: after };
 }
 
 async function resolveOwner(
